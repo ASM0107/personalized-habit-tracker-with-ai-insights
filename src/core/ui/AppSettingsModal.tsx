@@ -11,6 +11,7 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
     geminiApiKey,
     setGeminiApiKey,
     isAiLive,
+    hasServerKey,
     syncStats,
     syncNow,
   } = useAppContext();
@@ -52,27 +53,31 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
         </div>
 
         <div className="settings-section">
-          <h3>Google Gemini AI Inference</h3>
+          <h3>Google Gemini AI Gateway (Server-Side)</h3>
           <p className="settings-desc">
-            Provide a Gemini API key for live contextual coaching. When no key is set, the system uses deterministic rule-based heuristics.
+            Gemini credentials are securely handled on the backend server to prevent client-side credential exposure. The frontend delegates inference to the secure server gateway.
           </p>
 
           <div className="api-key-status">
             <span className={`status-indicator ${isAiLive ? "indicator-live" : "indicator-fallback"}`} />
             <span className="status-label">
-              {isAiLive ? "Active Mode: Gemini 2.0 Flash Live" : "Active Mode: Deterministic Local Rules"}
+              {hasServerKey
+                ? "Active Mode: Secure Server Gateway (GEMINI_API_KEY)"
+                : geminiApiKey
+                ? "Active Mode: Developer Key Override"
+                : "Active Mode: Deterministic Local Rules (Offline)"}
             </span>
           </div>
 
           <div className="form-group">
-            <label htmlFor="gemini-key-input">Gemini API Key</label>
+            <label htmlFor="gemini-key-input">Developer BYOK Override (Optional)</label>
             <div className="input-with-button">
               <input
                 id="gemini-key-input"
                 type={showKey ? "text" : "password"}
                 value={inputKey}
                 onChange={(e) => setInputKey(e.target.value)}
-                placeholder="AIzaSy..."
+                placeholder="Optional client key override..."
                 className="ui-input"
               />
               <button
@@ -91,7 +96,7 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
               onClick={handleSaveKey}
               className="btn btn-primary"
             >
-              Save Key
+              Save Override
             </button>
             {geminiApiKey && (
               <button
@@ -99,7 +104,7 @@ export function AppSettingsModal({ isOpen, onClose }: AppSettingsModalProps) {
                 onClick={handleClearKey}
                 className="btn btn-danger btn-sm"
               >
-                Clear Key
+                Clear Override
               </button>
             )}
           </div>

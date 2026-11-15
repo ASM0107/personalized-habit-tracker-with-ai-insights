@@ -15,6 +15,8 @@
     "dev": "vite",
     "build": "tsc --noEmit",
     "build:app": "vite build",
+    "start": "node server/index.js",
+    "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:arch": "vitest run src/tests/architecture.test.ts"

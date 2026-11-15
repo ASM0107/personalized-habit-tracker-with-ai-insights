@@ -41,6 +41,7 @@ export function App() {
     syncCoordinator,
     syncStats,
     isAiLive,
+    hasServerKey,
   } = useAppContext();
 
   const [activeTab, setActiveTab] = useState<NavTab>("DASHBOARD");
@@ -321,7 +322,7 @@ export function App() {
             title="Configure Cloud Sync & Gemini AI Engine"
           >
             <span className={`status-indicator ${isAiLive ? "indicator-live" : "indicator-fallback"}`} />
-            <span>AI: {isAiLive ? "Gemini Live" : "Local Rules"}</span>
+            <span>AI: {hasServerKey ? "Server Gateway" : isAiLive ? "Custom Live" : "Local Rules"}</span>
             <span className="pill-separator">•</span>
             <span>Sync: {syncStats.state === "IDLE" ? "Synced" : syncStats.state}</span>
           </button>

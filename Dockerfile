@@ -10,11 +10,19 @@ COPY . .
 RUN npm run build
 RUN npm run build:app
 
-FROM nginx:alpine
+FROM node:22-alpine
 
-COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+WORKDIR /app
 
-EXPOSE 80
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-CMD ["nginx", "-g", "daemon off;"]
+COPY --from=builder /app/dist ./dist
+COPY server ./server
+
+ENV NODE_ENV=production
+ENV PORT=3000
+
+EXPOSE 3000
+
+CMD ["node", "server/index.js"]

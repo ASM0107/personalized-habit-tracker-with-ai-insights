@@ -5,7 +5,6 @@ import {
   StackNavigationRouter,
   BrowserLocalStoragePort,
   GeminiInferenceClient,
-  MockAiInferenceClient,
   BroadcastChannelSyncAdapter,
   HttpRemoteSyncAdapter,
   SyncCoordinator,
@@ -47,24 +46,10 @@ export interface AppContextValue {
   readonly geminiApiKey: string;
   readonly setGeminiApiKey: (key: string) => void;
   readonly isAiLive: boolean;
+  readonly hasServerKey: boolean;
 }
 
 const AppContext = createContext<AppContextValue | null>(null);
-
-function createMockFallbackAi() {
-  return new MockAiInferenceClient({
-    habitId: "h-sample",
-    patternDetected: "Midweek Routine Interruption",
-    rootCauseHypothesis: "Work meetings are causing friction during afternoon habit time",
-    severityLevel: "medium",
-    suggestedAdjustment: {
-      category: "shift_time",
-      proposedTimeMinutes: 540,
-      justification: "Shift habit to morning at 9:00 AM before meeting fatigue sets in",
-    },
-    encouragementMicroCopy: "Consistency is a trajectory, not a binary state.",
-  });
-}
 
 function getOrCreateDeviceId(): string {
   const key = "habit_tracker_device_id";
@@ -87,9 +72,22 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
   const [currentScreen, setCurrentScreen] = useState<AppScreen>(() => navigation.getCurrentScreen());
   const [refreshCounter, setRefreshCounter] = useState(0);
 
+  const [hasServerKey, setHasServerKey] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    GeminiInferenceClient.checkServerHealth().then((health) => {
+      if (isMounted) {
+        setHasServerKey(health.hasServerKey);
+      }
+    });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   const [geminiApiKey, setGeminiApiKeyState] = useState(() => {
-    return GeminiInferenceClient.getStoredApiKey() ||
-      (typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_API_KEY ? import.meta.env.VITE_GEMINI_API_KEY : "");
+    return GeminiInferenceClient.getStoredApiKey();
   });
 
   const getTodayDateKey = () => {
@@ -117,7 +115,7 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights");
     const initialClient = geminiApiKey.length > 0
       ? new GeminiInferenceClient({ apiKey: geminiApiKey })
-      : createMockFallbackAi();
+      : new GeminiInferenceClient();
     return new InsightStore(insightStorage, initialClient, eventBus);
   });
 
@@ -127,7 +125,7 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights");
     const newClient = key.trim().length > 0
       ? new GeminiInferenceClient({ apiKey: key.trim() })
-      : createMockFallbackAi();
+      : new GeminiInferenceClient();
     setInsightStore(new InsightStore(insightStorage, newClient, eventBus));
     triggerRefresh();
   };
@@ -207,7 +205,8 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     syncNow,
     geminiApiKey,
     setGeminiApiKey,
-    isAiLive: geminiApiKey.length > 0,
+    isAiLive: hasServerKey || geminiApiKey.length > 0,
+    hasServerKey,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

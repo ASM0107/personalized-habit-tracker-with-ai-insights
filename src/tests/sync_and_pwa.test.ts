@@ -156,4 +156,46 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
     const clientWithoutKey = new GeminiInferenceClient({ apiKey: "" });
     expect(clientWithoutKey.hasApiKey()).toBe(false);
   });
+
+  it("verifies GeminiInferenceClient delegates to server gateway without leaking credentials", async () => {
+    let capturedUrl = "";
+    let capturedBody = "";
+    let capturedMethod = "";
+
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedMethod = init?.method ?? "GET";
+      capturedBody = (init?.body as string) ?? "";
+      return Promise.resolve(
+        new Response(JSON.stringify({ data: { message: "Server gateway success", status: "ok" } }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+    });
+
+    Object.defineProperty(globalThis, "fetch", {
+      value: mockFetch,
+      writable: true,
+      configurable: true,
+    });
+
+    const client = new GeminiInferenceClient({ apiKey: "" });
+    expect(client.isUsingServerGateway()).toBe(true);
+
+    const payload = {
+      systemInstruction: "System test instruction",
+      prompt: "Test user prompt",
+      responseSchemaJson: JSON.stringify({ type: "object" }),
+    };
+
+    const result = await client.generateStructured<{ message: string; status: string }>(payload);
+    expect(result.status).toBe("ok");
+    expect(result.message).toBe("Server gateway success");
+
+    expect(capturedUrl).toBe("/api/ai/infer");
+    expect(capturedMethod).toBe("POST");
+    expect(capturedUrl).not.toContain("key=");
+    expect(capturedBody).not.toContain("apiKey");
+  });
 });
