@@ -1,6 +1,14 @@
 {
   "name": "personalized-habit-tracker",
   "version": "1.0.0",
+  "description": "An intelligent, local-first habit tracking application with adaptive EMA momentum scoring, streak shields, behavioral analytics, PWA offline support, and Gemini AI insights.",
+  "author": "Aakash (ASM0107)",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ASM0107/personalized-habit-tracker-with-ai-insights.git"
+  },
+  "homepage": "https://github.com/ASM0107/personalized-habit-tracker-with-ai-insights#readme",
   "private": true,
   "type": "module",
   "scripts": {
