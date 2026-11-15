@@ -72,10 +72,12 @@ Designed to serve both privacy-focused guest users and users testing multi-devic
   - **Stateless Authentication vs. Persistence Decoupling:** Stateless HMAC-SHA256 bearer tokens eliminate the need for server-side session affinity (any serverless instance with `AUTH_SECRET` can verify the token). However, stateless tokens do **not** eliminate the need for shared persistent storage; serverless instances do not share local filesystem state, making a durable database necessary for reliable synchronisation across multiple instances.
 
 ### 6. Cloud & Peer Synchronisation Engine
-- **Server Cursors & Append-Only Log (AUD-011):** The synchronization backend records mutations into an append-only change log with monotonic sequence numbers (`serverCursor`). Clients pull changes incrementally via cursor pagination (`since`, `limit`, `nextCursor`, `hasMore`).
+- **Dual-State Model (Log & Materialized View):** The synchronization backend maintains both an append-only change log (`changeLogs[userId]`) with monotonic sequence numbers (`serverCursor`) and a deterministic materialized entity state (`materializedState[userId]`), ensuring incremental pull streaming without stale entity regression.
+- **Idempotent Mutations & Server-Side Deduplication:** Every mutation carries a globally unique `operationId`. The server validates incoming operations against `processedOperations[userId]`, guaranteeing that at-least-once network retries never produce duplicate entries or phantom cursor increments.
+- **Deletion Tombstones:** Deletions are explicitly propagated as deletion tombstones (`isDeleted: true`, `tombstone: true`), guaranteeing that out-of-order or stale concurrent edits can never resurrect deleted entities.
+- **Application Store Integration (`bindStorageToSync`):** Directly wires the `SyncCoordinator` to live `StoragePort` partitions, ensuring that remote sync changes update domain stores reactively while respecting Lamport causality.
 - **Observable Queue Persistence (AUD-013):** Client mutation queues in `SyncCoordinator` guarantee atomicity: if browser storage writes fail, in-memory state is rolled back and an observable error is raised.
-- **Conflict-Free Resolution:** Uses **Lamport logical clocks** and **Last-Write-Wins (LWW)** deterministic conflict resolution.
-- **Cross-Device Parity:** Habit updates committed on one device propagate to another when both sessions connect to a shared synchronisation backend.
+- **Conflict-Free Resolution:** Uses **Lamport logical clocks** and **Last-Write-Wins (LWW)** deterministic conflict resolution (breaking ties by `deviceId` and `operationId`).
 
 ### 7. Progressive Web App (PWA) Offline Experience
 - **Precached Assets:** Workbox service worker precaches all core application assets (`dist/`), ensuring instant startup.
@@ -125,13 +127,14 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── insights/                   # Heuristic detection, AI coaching & schema contracts
 │   │   └── streaks/                    # EMA momentum scoring, streak shields
 │   │
-│   └── tests/                          # Automated Verification Suite (17 files, 86 tests)
+│   └── tests/                          # Automated Verification Suite (18 files, 91 tests)
 │       ├── ai_gateway_security.test.ts # AI gateway payload constraints, rate limiting & header isolation
 │       ├── alpha_simulation.test.ts     # 30-day multi-persona cohort simulation
 │       ├── analytics.test.ts           # Correlation matrices & heatmap logic
 │       ├── architecture.test.ts        # Dune architectural boundary & comment enforcement
 │       ├── cloud_auth_security.test.ts # Token signature tampering, 7-day expiration & brute-force protection
 │       ├── core.test.ts                # EventBus, navigation & storage tests
+│       ├── distributed_sync_simulation.test.ts # Idempotent deduplication, materialized state & 3-device convergence
 │       ├── e2e_verification.test.ts    # PWA, offline sync & AI fallback E2E tests
 │       ├── frontend.test.ts            # View rendering & interactive state
 │       ├── habits.test.ts              # Habit scheduling & entry mutations
@@ -162,7 +165,7 @@ personalized-habit-tracker-with-ai-insights/
 | **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
 | **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
 | **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
-| **Test Suite** | Vitest 3.0 | 86 automated tests across 17 test files | Production-Ready |
+| **Test Suite** | Vitest 3.0 | 91 automated tests across 18 test files | Production-Ready |
 
 ---
 
@@ -295,7 +298,7 @@ npm run build:app   # Generates production bundle with PWA service worker (dist/
 
 ### Automated Test Suite
 ```bash
-# Runs 86 unit, integration, sync, multi-user, and benchmark tests across 17 test files
+# Runs 91 unit, integration, sync, multi-user, and benchmark tests across 18 test files
 npm test
 
 # Enforces Dune architectural invariants (0 comments, strict vertical feature boundaries)

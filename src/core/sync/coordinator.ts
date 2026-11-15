@@ -23,6 +23,7 @@ export class SyncCoordinator {
   private readonly synchronizer: LastWriteWinsSynchronizer<unknown>;
   private readonly eventBus: EventBusPort | null;
   private readonly pendingOutbound: SyncEnvelope<unknown>[] = [];
+  private readonly processedOperationIds = new Set<string>();
   private readonly entityAppliers = new Map<string, InboundEntityApplier>();
   private readonly queueStorageKey: string;
   private readonly cursorStorageKey: string;
@@ -72,6 +73,9 @@ export class SyncCoordinator {
         if (Array.isArray(parsed)) {
           for (const item of parsed) {
             this.pendingOutbound.push(item);
+            if (item && typeof item === "object" && typeof item.operationId === "string") {
+              this.processedOperationIds.add(item.operationId);
+            }
           }
         }
       }
@@ -119,6 +123,10 @@ export class SyncCoordinator {
     }
   }
 
+  public getSynchronizer(): LastWriteWinsSynchronizer<unknown> {
+    return this.synchronizer;
+  }
+
   public registerApplier(entityType: string, applier: InboundEntityApplier): void {
     this.entityAppliers.set(entityType, applier);
   }
@@ -134,31 +142,53 @@ export class SyncCoordinator {
     };
   }
 
+  public hasProcessedOperation(operationId: string): boolean {
+    return this.processedOperationIds.has(operationId);
+  }
+
   public enqueueLocalChange<T>(
     entityId: string,
     entityType: string,
     payload: T,
-    isDeleted = false
+    isDeleted = false,
+    customOperationId?: string
   ): SyncEnvelope<T> {
     const lamport = this.clock.increment();
+    const operationId =
+      customOperationId ||
+      `op_${this.deviceId}_${lamport}_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
     const envelope: SyncEnvelope<T> = {
+      operationId,
       entityId,
       entityType,
       lamportTimestamp: lamport,
       deviceId: this.deviceId,
       payload,
       isDeleted,
+      tombstone: isDeleted,
+      wallClock: Date.now(),
     };
 
     this.pendingOutbound.push(envelope as SyncEnvelope<unknown>);
+    this.processedOperationIds.add(operationId);
     try {
       this.persistQueue();
     } catch (err) {
       this.pendingOutbound.pop();
+      this.processedOperationIds.delete(operationId);
       const message = err instanceof Error ? err.message : "unknown storage error";
       throw new Error(`Storage write failed: unable to persist sync queue for ${entityId}: ${message}`);
     }
     return envelope;
+  }
+
+  public enqueueLocalDeletion<T>(
+    entityId: string,
+    entityType: string,
+    lastKnownPayload: T,
+    customOperationId?: string
+  ): SyncEnvelope<T> {
+    return this.enqueueLocalChange(entityId, entityType, lastKnownPayload, true, customOperationId);
   }
 
   public async syncNow(): Promise<SyncStats> {
@@ -220,15 +250,20 @@ export class SyncCoordinator {
 
   private async handleIncomingEnvelopes(envelopes: readonly SyncEnvelope<unknown>[]): Promise<void> {
     for (const env of envelopes) {
+      if (env.operationId && this.processedOperationIds.has(env.operationId)) {
+        continue;
+      }
+      if (env.operationId) {
+        this.processedOperationIds.add(env.operationId);
+      }
+
       this.clock.observe(env.lamportTimestamp);
       this.lastSyncedLamport = Math.max(this.lastSyncedLamport, env.lamportTimestamp);
 
-      const winningEnvelope = this.synchronizer.resolveWinner(env, env);
-
-      const applier = this.entityAppliers.get(winningEnvelope.entityType);
+      const applier = this.entityAppliers.get(env.entityType);
       if (applier) {
         try {
-          await applier(winningEnvelope);
+          await applier(env);
         } catch {
           continue;
         }
@@ -236,13 +271,14 @@ export class SyncCoordinator {
 
       if (this.eventBus) {
         this.eventBus.publish({
-          id: `sync-rx-${winningEnvelope.entityId}-${Date.now()}`,
+          id: `sync-rx-${env.entityId}-${Date.now()}`,
           type: "SYNC_APPLIED",
           timestamp: Date.now(),
           payload: {
-            entityId: winningEnvelope.entityId,
-            entityType: winningEnvelope.entityType,
-            isDeleted: winningEnvelope.isDeleted,
+            entityId: env.entityId,
+            entityType: env.entityType,
+            isDeleted: env.isDeleted,
+            operationId: env.operationId,
           },
         });
       }

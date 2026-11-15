@@ -1,14 +1,14 @@
 # Comprehensive Testing & Verification Report
 ## Project: 001 - Personalized Habit Tracker with AI Insights
-**Status**: Passed All Automated Tests (17/17 Test Suites, 86/86 Tests)  
-**Verification Level**: Unit, Integration, Alpha Cohort, Frontend, Remote Sync, PWA, Multi-User & Security  
+**Status**: Passed All Automated Tests (18/18 Test Suites, 91/91 Tests)  
+**Verification Level**: Unit, Integration, Alpha Cohort, Frontend, Remote Sync, PWA, Multi-User, Security & Distributed Simulation  
 **Architecture**: Dune Framework for Agents (Vertical Slicing, Strict Import Bans, Zero Comments)
 
 ---
 
 ## 1. Executive Summary
 
-This report documents the verification and operational assessment of the **Personalized Habit Tracker with AI Insights** across seven distinct testing phases:
+This report documents the verification and operational assessment of the **Personalized Habit Tracker with AI Insights** across eight distinct testing phases:
 1. **Unit Testing & Mathematical Edge Cases**: Boundary conditions, leap year calendar math, numerical stability of exponential moving averages (EMA), zero-variance correlation safety.
 2. **Integrated Testing**: Multi-feature event-driven workflows integrating habit tracking, reactive streak shield application, heuristic friction detection, Gemini structured insight synthesis, and analytics aggregation.
 3. **Alpha Testing Simulation**: 30-day calendar simulation across a diverse 5-persona user cohort validating real-world behavioural resilience, offline-first batch operations, and system invariants.
@@ -16,6 +16,7 @@ This report documents the verification and operational assessment of the **Perso
 5. **Remote Cloud Sync & AI Gateway**: Verification of HttpRemoteSyncAdapter, multi-tab BroadcastChannelSyncAdapter, persistent offline outbound queue, and server-side Gemini API key isolation with x-goog-api-key headers.
 6. **E2E & Production Verification**: Verification of PWA manifest and service worker precaching, network-only API routing, offline application launch, simultaneous conflicting mutations (LWW + device ID tie-break), and automatic AI retry with exponential backoff.
 7. **Security & Identity Hardening**: Verification of scrypt password hashing with explicit cost parameters, HMAC-SHA256 bearer token integrity, 7-day token expiration, future-timestamp rejection, brute-force rate limiting, and partitioned local profile lifecycle.
+8. **Distributed Synchronization Correctness & Convergence**: Verification of globally unique operation identifiers, server-side deduplication against at-least-once duplicate delivery, dual-state materialized entity tracking, deletion tombstones, live application-store integration (`bindStorageToSync`), and a concurrent 3-device mesh convergence simulation.
 
 ---
 
@@ -40,7 +41,8 @@ This report documents the verification and operational assessment of the **Perso
 | **AI Gateway Security** | [`src/tests/ai_gateway_security.test.ts`](src/tests/ai_gateway_security.test.ts) | 9 | ~15 ms | **PASS** |
 | **Local Profile Lifecycle** | [`src/tests/local_profile_lifecycle.test.ts`](src/tests/local_profile_lifecycle.test.ts) | 6 | ~15 ms | **PASS** |
 | **Cloud Auth Security** | [`src/tests/cloud_auth_security.test.ts`](src/tests/cloud_auth_security.test.ts) | 10 | ~340 ms | **PASS** |
-| **Total** | **17 Test Files** | **86 Tests** | **~2.50 s** | **100% PASS** |
+| **Distributed Sync Correctness** | [`src/tests/distributed_sync_simulation.test.ts`](src/tests/distributed_sync_simulation.test.ts) | 5 | ~1430 ms | **PASS** |
+| **Total** | **18 Test Files** | **91 Tests** | **~2.88 s** | **100% PASS** |
 
 ---
 
@@ -78,6 +80,13 @@ This report documents the verification and operational assessment of the **Perso
 * **Durable Offline Queue**: Verified that uncommitted outbound sync mutations are persisted in `localStorage` across page reloads and drained upon reconnection.
 * **Inbound Sync Application**: Verified that incoming sync envelopes from remote pulls are dispatched directly into local stores and update the UI reactively.
 * **Server LWW Tie-Break**: Verified deterministic conflict resolution ordering by Lamport timestamp, breaking ties using lexicographical device ID comparison.
+
+### 3.6 Distributed Synchronization Correctness & Multi-Device Convergence (Project 001.2)
+* **Idempotent Mutations & Server-Side Deduplication**: Every mutation carries a globally unique `operationId`. Validated that at-least-once network retries with duplicate envelopes return `newlyCommittedCount: 0`, advance zero cursors, and avoid duplicating change logs.
+* **Materialized Entity State vs. Change Log**: Validated that the server maintains both the append-only change log and a deterministic materialized state (`materializedState[userId]`). Stale mutations arriving out-of-order are logged for auditability but never regress winning entity values.
+* **Deletion Tombstones**: Validated that deletion tombstones (`isDeleted: true`, `tombstone: true`) prevent stale concurrent edits from resurrecting deleted records. Only operations with strictly higher Lamport timestamps can recreate entities.
+* **Live Store Integration (`bindStorageToSync`)**: Wrote permanent bridge wiring `SyncCoordinator` to `BrowserLocalStoragePort` and `HabitStore`. Validated that habits created on Device 1 propagate directly into Device 2's storage and domain store, and that deletion tombstones correctly purge local records.
+* **3-Device Mesh Convergence**: Simulated 3 concurrent devices (Phone, Laptop, Tablet) with out-of-order arrivals, conflicting updates, and independent local mutations. Validated mathematical convergence: all 3 devices and the server reached the identical state (`Hydrate Optimum`, 3 total records).
 
 ---
 

@@ -32,6 +32,8 @@ let dbState = {
   users: {},
   changeLogs: {},
   serverCursors: {},
+  materializedState: {},
+  processedOperations: {},
 };
 
 function loadState() {
@@ -43,6 +45,8 @@ function loadState() {
         dbState.users = { ...(diskState.users || {}), ...dbState.users };
         dbState.changeLogs = { ...(diskState.changeLogs || {}), ...dbState.changeLogs };
         dbState.serverCursors = { ...(diskState.serverCursors || {}), ...dbState.serverCursors };
+        dbState.materializedState = { ...(diskState.materializedState || {}), ...dbState.materializedState };
+        dbState.processedOperations = { ...(diskState.processedOperations || {}), ...dbState.processedOperations };
       }
     }
   } catch {
@@ -52,7 +56,13 @@ function loadState() {
 
 function saveState() {
   try {
-    let existingOnDisk = { users: {}, changeLogs: {}, serverCursors: {} };
+    let existingOnDisk = {
+      users: {},
+      changeLogs: {},
+      serverCursors: {},
+      materializedState: {},
+      processedOperations: {},
+    };
     if (fs.existsSync(STORAGE_FILE)) {
       try {
         const raw = fs.readFileSync(STORAGE_FILE, "utf-8");
@@ -61,13 +71,21 @@ function saveState() {
           existingOnDisk = parsed;
         }
       } catch {
-        existingOnDisk = { users: {}, changeLogs: {}, serverCursors: {} };
+        existingOnDisk = {
+          users: {},
+          changeLogs: {},
+          serverCursors: {},
+          materializedState: {},
+          processedOperations: {},
+        };
       }
     }
     const merged = {
       users: { ...(existingOnDisk.users || {}), ...dbState.users },
       changeLogs: { ...(existingOnDisk.changeLogs || {}), ...dbState.changeLogs },
       serverCursors: { ...(existingOnDisk.serverCursors || {}), ...dbState.serverCursors },
+      materializedState: { ...(existingOnDisk.materializedState || {}), ...dbState.materializedState },
+      processedOperations: { ...(existingOnDisk.processedOperations || {}), ...dbState.processedOperations },
     };
     dbState = merged;
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(merged), "utf-8");
@@ -262,26 +280,80 @@ export function handleSyncPush(userId, envelopes) {
   if (!dbState.serverCursors[userId]) {
     dbState.serverCursors[userId] = 0;
   }
+  if (!dbState.materializedState[userId]) {
+    dbState.materializedState[userId] = {};
+  }
+  if (!dbState.processedOperations[userId]) {
+    dbState.processedOperations[userId] = {};
+  }
 
   const userLogs = dbState.changeLogs[userId];
+  const userMaterialized = dbState.materializedState[userId];
+  const userProcessedOps = dbState.processedOperations[userId];
   let cursor = dbState.serverCursors[userId];
+  let newlyCommittedCount = 0;
 
   for (const envelope of envelopes) {
+    const opId =
+      envelope.operationId ||
+      `op_${envelope.deviceId || "anon"}_${envelope.lamportTimestamp || Date.now()}_${envelope.entityId}`;
+
+    if (userProcessedOps[opId]) {
+      continue;
+    }
+
     cursor += 1;
+    newlyCommittedCount += 1;
+    userProcessedOps[opId] = { sequence: cursor, committedAt: Date.now() };
+
+    const isDeleted = Boolean(envelope.isDeleted || envelope.tombstone);
     const changeRecord = {
       sequence: cursor,
       serverCursor: cursor,
+      operationId: opId,
       entityId: envelope.entityId,
       entityType: envelope.entityType,
-      operation: envelope.isDeleted ? "DELETE" : "UPSERT",
+      operation: isDeleted ? "DELETE" : "UPSERT",
       lamportTimestamp: envelope.lamportTimestamp || 0,
       deviceId: envelope.deviceId || envelope.clientId || "",
       payload: envelope.payload,
-      isDeleted: Boolean(envelope.isDeleted),
+      isDeleted,
+      tombstone: isDeleted,
       createdAt: Date.now(),
       userId,
     };
     userLogs.push(changeRecord);
+
+    const entityKey = `${changeRecord.entityType}:${changeRecord.entityId}`;
+    const existing = userMaterialized[entityKey];
+
+    let incomingWins = false;
+    if (!existing) {
+      incomingWins = true;
+    } else if (changeRecord.lamportTimestamp > existing.lamportTimestamp) {
+      incomingWins = true;
+    } else if (changeRecord.lamportTimestamp < existing.lamportTimestamp) {
+      incomingWins = false;
+    } else if (changeRecord.deviceId !== existing.deviceId) {
+      incomingWins = changeRecord.deviceId > existing.deviceId;
+    } else {
+      incomingWins = (changeRecord.operationId || "") >= (existing.operationId || "");
+    }
+
+    if (incomingWins) {
+      userMaterialized[entityKey] = {
+        entityId: changeRecord.entityId,
+        entityType: changeRecord.entityType,
+        payload: changeRecord.payload,
+        lamportTimestamp: changeRecord.lamportTimestamp,
+        deviceId: changeRecord.deviceId,
+        operationId: changeRecord.operationId,
+        isDeleted: changeRecord.isDeleted,
+        tombstone: changeRecord.tombstone,
+        serverCursor: cursor,
+        updatedAt: Date.now(),
+      };
+    }
   }
 
   dbState.serverCursors[userId] = cursor;
@@ -292,6 +364,7 @@ export function handleSyncPush(userId, envelopes) {
     body: {
       success: true,
       committedCount: envelopes.length,
+      newlyCommittedCount,
       serverCursor: cursor,
       serverLamportTimestamp: cursor,
     },
@@ -311,16 +384,30 @@ export function handleSyncPull(userId, sinceCursor = 0, limit = 100) {
   const page = filtered.slice(0, safeLimit);
   const hasMore = filtered.length > safeLimit;
   const nextCursor = page.length > 0 ? page[page.length - 1].sequence : since;
+  const materializedList = Object.values(dbState.materializedState[userId] || {});
 
   return {
     status: 200,
     body: {
       envelopes: page,
       changes: page,
+      materialized: materializedList,
       nextCursor,
       hasMore,
       latestServerCursor: latestCursor,
       latestServerTimestamp: latestCursor,
+    },
+  };
+}
+
+export function handleSyncGetMaterialized(userId) {
+  loadState();
+  const state = dbState.materializedState[userId] || {};
+  return {
+    status: 200,
+    body: {
+      entities: Object.values(state),
+      latestServerCursor: dbState.serverCursors[userId] || 0,
     },
   };
 }

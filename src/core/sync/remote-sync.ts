@@ -11,6 +11,7 @@ export interface SyncPushResult {
 export interface SyncPullResult {
   readonly changes: readonly SyncEnvelope<unknown>[];
   readonly envelopes: readonly SyncEnvelope<unknown>[];
+  readonly materialized?: readonly SyncEnvelope<unknown>[] | undefined;
   readonly nextCursor: number;
   readonly hasMore: boolean;
   readonly latestServerCursor: number;
@@ -150,6 +151,7 @@ export class HttpRemoteSyncAdapter implements RemoteSyncPort {
       const body = (await response.json()) as {
         changes?: readonly SyncEnvelope<unknown>[];
         envelopes?: readonly SyncEnvelope<unknown>[];
+        materialized?: readonly SyncEnvelope<unknown>[];
         nextCursor?: number;
         hasMore?: boolean;
         latestServerCursor?: number;
@@ -157,14 +159,15 @@ export class HttpRemoteSyncAdapter implements RemoteSyncPort {
       };
 
       const changes = body.changes || body.envelopes || [];
+      const materialized = body.materialized;
       const nextCursor = typeof body.nextCursor === "number" ? body.nextCursor : sinceCursor;
       const hasMore = Boolean(body.hasMore);
       const latestServerCursor =
         typeof body.latestServerCursor === "number"
           ? body.latestServerCursor
-          : typeof body.latestServerTimestamp === "number"
-          ? body.latestServerTimestamp
-          : nextCursor;
+        : typeof body.latestServerTimestamp === "number"
+        ? body.latestServerTimestamp
+        : nextCursor;
 
       if (changes.length > 0) {
         for (const subscriber of this.subscribers) {
@@ -175,6 +178,7 @@ export class HttpRemoteSyncAdapter implements RemoteSyncPort {
       return {
         changes,
         envelopes: changes,
+        ...(materialized !== undefined ? { materialized } : {}),
         nextCursor,
         hasMore,
         latestServerCursor,

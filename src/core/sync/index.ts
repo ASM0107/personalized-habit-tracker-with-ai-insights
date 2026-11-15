@@ -1,10 +1,13 @@
 export interface SyncEnvelope<TPayload> {
+  readonly operationId?: string;
   readonly entityId: string;
   readonly entityType: string;
   readonly lamportTimestamp: number;
   readonly deviceId: string;
   readonly payload: TPayload;
   readonly isDeleted: boolean;
+  readonly tombstone?: boolean;
+  readonly wallClock?: number;
 }
 
 export interface ClockPort {
@@ -46,12 +49,18 @@ export class LastWriteWinsSynchronizer<T> {
     if (incomingEnvelope.lamportTimestamp < localEnvelope.lamportTimestamp) {
       return localEnvelope;
     }
-    return incomingEnvelope.deviceId > localEnvelope.deviceId
-      ? incomingEnvelope
-      : localEnvelope;
+    if (incomingEnvelope.deviceId !== localEnvelope.deviceId) {
+      return incomingEnvelope.deviceId > localEnvelope.deviceId
+        ? incomingEnvelope
+        : localEnvelope;
+    }
+    const incomingOp = incomingEnvelope.operationId || "";
+    const localOp = localEnvelope.operationId || "";
+    return incomingOp >= localOp ? incomingEnvelope : localEnvelope;
   }
 }
 
 export * from "./remote-sync.js";
 export * from "./coordinator.js";
+export * from "./store-bridge.js";
 
