@@ -84,9 +84,21 @@ export default defineConfig(({ mode }) => {
         },
         workbox: {
           globPatterns: ["**/*.{js,css,html,ico,png,svg,json}"],
+          navigateFallbackDenylist: [/^\/api\//],
           runtimeCaching: [
             {
-              urlPattern: ({ url }) => url.origin === self.location.origin,
+              urlPattern: ({ url }) => url.pathname.startsWith("/api/"),
+              handler: "NetworkOnly",
+            },
+            {
+              urlPattern: ({ request, url }) =>
+                url.origin === self.location.origin &&
+                !url.pathname.startsWith("/api/") &&
+                (request.destination === "style" ||
+                  request.destination === "script" ||
+                  request.destination === "image" ||
+                  request.destination === "font" ||
+                  /\.(?:js|css|html|ico|png|svg|webmanifest)$/.test(url.pathname)),
               handler: "StaleWhileRevalidate",
               options: {
                 cacheName: "habit-tracker-static-assets",

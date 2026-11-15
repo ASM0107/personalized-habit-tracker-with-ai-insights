@@ -19,7 +19,7 @@ describe("Cloud Auth Security & Token Integrity Audit", () => {
 
     const shortPasswordRes = handleRegister({ email: "valid@test.com", password: "123" }, "test-ip-reg-2");
     expect(shortPasswordRes.status).toBe(400);
-    expect(shortPasswordRes.body.error).toContain("at least 6 characters");
+    expect(shortPasswordRes.body.error).toContain("at least 8 characters");
   });
 
   it("registers account successfully and rejects duplicate registration with 409", () => {
@@ -80,7 +80,7 @@ describe("Cloud Auth Security & Token Integrity Audit", () => {
     expect(verifyToken(tamperedSigToken)).toBeNull();
   });
 
-  it("enforces a strict 7-day token expiration lifecycle", () => {
+  it("enforces a strict 7-day token expiration lifecycle and rejects future-dated tokens", () => {
     const now = Date.now();
     const freshUser = { id: "usr_test_fresh", email: "fresh@example.com", name: "Fresh" };
     const freshToken = signToken(freshUser, now);
@@ -90,6 +90,11 @@ describe("Cloud Auth Security & Token Integrity Audit", () => {
     const expiredUser = { id: "usr_test_expired", email: "expired@example.com", name: "Expired" };
     const expiredToken = signToken(expiredUser, eightDaysAgo);
     expect(verifyToken(expiredToken)).toBeNull();
+
+    const futureTimestamp = now + 120000;
+    const futureUser = { id: "usr_test_future", email: "future@example.com", name: "Future" };
+    const futureToken = signToken(futureUser, futureTimestamp);
+    expect(verifyToken(futureToken)).toBeNull();
   });
 
   it("enforces brute-force rate limits on registration and authentication attempts", () => {
@@ -132,5 +137,47 @@ describe("Cloud Auth Security & Token Integrity Audit", () => {
     expect(pullRes.body.envelopes?.length).toBe(1);
     const firstEnvelope = pullRes.body.envelopes?.[0] as { entityId?: string } | undefined;
     expect(firstEnvelope?.entityId).toBe("sync-habit-1");
+  });
+
+  it("enforces deterministic device-ID tie-breaking when lamport timestamps are equal", () => {
+    const loginRes = handleLogin({ email: testEmail, password: testPassword }, "test-ip-log-6");
+    const user = loginRes.body.user;
+    if (!user) {
+      throw new Error("Expected user");
+    }
+
+    const envDeviceA = {
+      entityId: "tie-break-habit",
+      entityType: "HABIT",
+      operation: "UPSERT",
+      payload: { title: "From Device A" },
+      lamportTimestamp: 5,
+      deviceId: "device-aaa",
+    };
+
+    const envDeviceB = {
+      entityId: "tie-break-habit",
+      entityType: "HABIT",
+      operation: "UPSERT",
+      payload: { title: "From Device B" },
+      lamportTimestamp: 5,
+      deviceId: "device-zzz",
+    };
+
+    handleSyncPush(user.id, [envDeviceA]);
+    handleSyncPush(user.id, [envDeviceB]);
+
+    const pullRes = handleSyncPull(user.id, 0);
+    const winning = pullRes.body.envelopes?.find((e: any) => e.entityId === "tie-break-habit") as any;
+    expect(winning).toBeDefined();
+    expect(winning.payload.title).toBe("From Device B");
+  });
+
+  it("validates sync payload structure and rejects malformed envelope data", () => {
+    const invalidBatch = handleSyncPush("usr_test", null as any);
+    expect(invalidBatch.status).toBe(400);
+
+    const malformedEnvelope = handleSyncPush("usr_test", [{ invalid: true }] as any);
+    expect(malformedEnvelope.status).toBe(400);
   });
 });

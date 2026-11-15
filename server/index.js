@@ -45,10 +45,17 @@ const MIME_TYPES = {
   ".ico": "image/x-icon",
 };
 
-function readJsonBody(req) {
+function readJsonBody(req, maxBytes = 100000) {
   return new Promise((resolve, reject) => {
     let raw = "";
+    let receivedBytes = 0;
     req.on("data", (chunk) => {
+      receivedBytes += chunk.length;
+      if (receivedBytes > maxBytes) {
+        req.destroy();
+        reject(new Error("Payload Too Large: request body exceeds maximum allowed size"));
+        return;
+      }
       raw += chunk;
     });
     req.on("end", () => {
@@ -58,11 +65,18 @@ function readJsonBody(req) {
         reject(err);
       }
     });
+    req.on("error", (err) => reject(err));
   });
 }
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+
+  if (url.pathname.startsWith("/api/")) {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+  }
 
   if (url.pathname === "/api/ai/health" && req.method === "GET") {
     const hasKey = Boolean(process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY.trim().length > 0);

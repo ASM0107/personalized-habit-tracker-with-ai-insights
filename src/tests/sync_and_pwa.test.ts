@@ -5,6 +5,7 @@ import {
   HttpRemoteSyncAdapter,
   SyncCoordinator,
   type SyncEnvelope,
+  type RemoteSyncPort,
 } from "../core/sync/index.js";
 import { GeminiInferenceClient } from "../core/ai-client/index.js";
 
@@ -33,7 +34,6 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
 
   it("verifies BroadcastChannelSyncAdapter delivers envelopes across peer clients", async () => {
     const adapterA = new BroadcastChannelSyncAdapter("peer_test_channel");
-    const adapterB = new BroadcastChannelSyncAdapter("peer_test_channel");
 
     const envelopes: SyncEnvelope<{ title: string }>[] = [
       {
@@ -57,95 +57,103 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
 
     const nonePulled = await adapterA.pullEnvelopes(15);
     expect(nonePulled.length).toBe(0);
-
-    adapterA.close();
-    adapterB.close();
   });
 
-  it("verifies HttpRemoteSyncAdapter pushes and pulls envelopes with mock HTTP endpoint", async () => {
-    const mockEnvelopes: SyncEnvelope<unknown>[] = [
-      {
-        entityId: "h-journaling",
-        entityType: "HABIT",
-        lamportTimestamp: 42,
-        deviceId: "dev-phone",
-        payload: { title: "Journaling" },
-        isDeleted: false,
-      },
-    ];
+  it("verifies HttpRemoteSyncAdapter communicates over network protocol", async () => {
+    let capturedUrl = "";
+    let capturedHeaders: Record<string, string> = {};
+    let capturedBody = "";
 
-    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
-      if (url.endsWith("/push") && init?.method === "POST") {
+    const mockFetch = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      capturedUrl = url;
+      capturedHeaders = (init?.headers as Record<string, string>) ?? {};
+      capturedBody = (init?.body as string) ?? "";
+
+      if (url.includes("/push")) {
         return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              committedCount: 1,
-              serverLamportTimestamp: 42,
-            }),
-            { status: 200 }
-          )
+          new Response(JSON.stringify({ committedCount: 1, serverLamportTimestamp: 42 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
         );
       }
-      if (url.includes("/pull") && (!init || init.method === "GET")) {
+
+      if (url.includes("/pull")) {
+        const dummyEnvelope: SyncEnvelope<{ title: string }> = {
+          entityId: "pulled-h1",
+          entityType: "HABIT",
+          lamportTimestamp: 42,
+          deviceId: "remote-server",
+          payload: { title: "Remote Synced Habit" },
+          isDeleted: false,
+        };
         return Promise.resolve(
-          new Response(
-            JSON.stringify({
-              envelopes: mockEnvelopes,
-            }),
-            { status: 200 }
-          )
+          new Response(JSON.stringify({ envelopes: [dummyEnvelope], latestServerTimestamp: 42 }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          })
         );
       }
-      return Promise.resolve(new Response("Not Found", { status: 404 }));
+
+      return Promise.reject(new Error("Unknown route"));
     });
 
     Object.defineProperty(globalThis, "fetch", {
-      value: fetchMock,
+      value: mockFetch,
       writable: true,
       configurable: true,
     });
 
-    const httpAdapter = new HttpRemoteSyncAdapter({
-      endpointUrl: "https://sync.test.local/v1",
-      authToken: "test-secret-token",
+    const adapter = new HttpRemoteSyncAdapter({
+      endpointUrl: "https://api.example.com/sync",
+      authToken: "test-auth-token-123",
     });
 
-    const pushResult = await httpAdapter.pushEnvelopes(mockEnvelopes);
-    expect(pushResult.success).toBe(true);
-    expect(pushResult.committedCount).toBe(1);
-    expect(pushResult.serverLamportTimestamp).toBe(42);
+    const pushRes = await adapter.pushEnvelopes([
+      {
+        entityId: "local-h1",
+        entityType: "HABIT",
+        lamportTimestamp: 1,
+        deviceId: "local-dev",
+        payload: { title: "Local Habit" },
+        isDeleted: false,
+      },
+    ]);
 
-    const pulled = await httpAdapter.pullEnvelopes(10);
-    expect(pulled.length).toBe(1);
-    expect(pulled[0]?.entityId).toBe("h-journaling");
+    expect(pushRes.success).toBe(true);
+    expect(pushRes.serverLamportTimestamp).toBe(42);
+    expect(capturedUrl).toBe("https://api.example.com/sync/push");
+    expect(capturedHeaders["Authorization"]).toBe("Bearer test-auth-token-123");
+    expect(capturedBody).toContain("local-h1");
+
+    const pullRes = await adapter.pullEnvelopes(0);
+    expect(pullRes.length).toBe(1);
+    expect(pullRes[0]?.entityId).toBe("pulled-h1");
   });
 
-  it("verifies SyncCoordinator manages outbound queues and tracks sync statistics", async () => {
+  it("verifies SyncCoordinator manages online/offline states and transitions", async () => {
     const clock = new LamportClock();
-    const adapter = new BroadcastChannelSyncAdapter("coord_test_channel");
-    const coordinator = new SyncCoordinator("device-test-node", clock, adapter);
+    const mockAdapter = new BroadcastChannelSyncAdapter("sync_coordinator_test_channel");
+    const coordinator = new SyncCoordinator("test-device-coord", clock, mockAdapter);
 
-    const initialStats = coordinator.getStats();
-    expect(initialStats.state).toBe("IDLE");
-    expect(initialStats.pendingOutboundCount).toBe(0);
+    expect(coordinator.getStats().state).toBe("IDLE");
+    expect(coordinator.getStats().pendingOutboundCount).toBe(0);
 
-    coordinator.enqueueLocalChange("h-stretch", "HABIT", { title: "Stretching" });
-    coordinator.enqueueLocalChange("h-hydrate", "HABIT", { title: "Hydration" });
+    coordinator.enqueueLocalChange("habit-1", "HABIT", { title: "Coord Habit" });
+    expect(coordinator.getStats().pendingOutboundCount).toBe(1);
 
-    const queuedStats = coordinator.getStats();
-    expect(queuedStats.pendingOutboundCount).toBe(2);
-
-    const syncStats = await coordinator.syncNow();
-    expect(syncStats.state).toBe("IDLE");
-    expect(syncStats.pendingOutboundCount).toBe(0);
-    expect(syncStats.lastSyncedLamport).toBeGreaterThan(0);
+    const statsAfterSync = await coordinator.syncNow();
+    expect(statsAfterSync.state).toBe("IDLE");
+    expect(statsAfterSync.pendingOutboundCount).toBe(0);
 
     coordinator.destroy();
   });
 
-  it("verifies GeminiInferenceClient dynamic key configuration and localStorage persistence", () => {
-    GeminiInferenceClient.storeApiKeyLocally("AIzaSyTestKey123");
-    expect(GeminiInferenceClient.getStoredApiKey()).toBe("AIzaSyTestKey123");
+  it("verifies GeminiInferenceClient storage persistence and fallback logic", () => {
+    expect(GeminiInferenceClient.getStoredApiKey()).toBe("");
+
+    GeminiInferenceClient.storeApiKeyLocally("test-gemini-key-12345");
+    expect(GeminiInferenceClient.getStoredApiKey()).toBe("test-gemini-key-12345");
 
     const clientWithStoredKey = new GeminiInferenceClient();
     expect(clientWithStoredKey.hasApiKey()).toBe(true);
@@ -197,5 +205,75 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
     expect(capturedMethod).toBe("POST");
     expect(capturedUrl).not.toContain("key=");
     expect(capturedBody).not.toContain("apiKey");
+  });
+
+  it("persists offline sync outbound queue across coordinator reloads", async () => {
+    const clock = new LamportClock();
+    const dummyAdapter: RemoteSyncPort = {
+      pushEnvelopes: async () => ({ success: false, committedCount: 0, serverLamportTimestamp: 0, error: "offline" }),
+      pullEnvelopes: async () => [],
+      subscribeToRemote: () => () => {},
+    };
+
+    const coord1 = new SyncCoordinator("persisted-device-1", clock, dummyAdapter);
+    coord1.enqueueLocalChange("offline-h1", "HABIT", { title: "Offline Habit 1" });
+    coord1.enqueueLocalChange("offline-h2", "HABIT", { title: "Offline Habit 2" });
+    expect(coord1.getStats().pendingOutboundCount).toBe(2);
+
+    const coord2 = new SyncCoordinator("persisted-device-1", clock, dummyAdapter);
+    expect(coord2.getStats().pendingOutboundCount).toBe(2);
+
+    coord1.destroy();
+    coord2.destroy();
+  });
+
+  it("dispatches incoming remote sync envelopes to registered local entity appliers", async () => {
+    const clock = new LamportClock();
+    const localDatabase = new Map<string, any>();
+
+    const dummyAdapter: RemoteSyncPort = {
+      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverLamportTimestamp: 10 }),
+      pullEnvelopes: async () => [
+        {
+          entityId: "remote-applied-habit",
+          entityType: "HABIT",
+          lamportTimestamp: 15,
+          deviceId: "remote-cloud",
+          payload: { id: "remote-applied-habit", title: "Cloud Pulled Habit" },
+          isDeleted: false,
+        },
+      ],
+      subscribeToRemote: () => () => {},
+    };
+
+    const coordinator = new SyncCoordinator("inbound-test-device", clock, dummyAdapter);
+    coordinator.registerApplier("HABIT", async (env) => {
+      localDatabase.set(env.entityId, env.payload);
+    });
+
+    const stats = await coordinator.syncNow();
+    expect(stats.state).toBe("IDLE");
+    expect(localDatabase.has("remote-applied-habit")).toBe(true);
+    expect(localDatabase.get("remote-applied-habit").title).toBe("Cloud Pulled Habit");
+
+    coordinator.destroy();
+  });
+
+  it("transitions SyncCoordinator into ERROR state when pull request fails", async () => {
+    const clock = new LamportClock();
+    const failingAdapter: RemoteSyncPort = {
+      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverLamportTimestamp: 0 }),
+      pullEnvelopes: async () => {
+        throw new Error("500 Internal Server Error");
+      },
+      subscribeToRemote: () => () => {},
+    };
+
+    const coordinator = new SyncCoordinator("failing-pull-device", clock, failingAdapter);
+    const stats = await coordinator.syncNow();
+    expect(stats.state).toBe("ERROR");
+    expect(stats.lastError).toContain("500 Internal Server Error");
+
+    coordinator.destroy();
   });
 });

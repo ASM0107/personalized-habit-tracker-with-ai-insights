@@ -123,7 +123,7 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── insights/                   # Heuristic detection, AI coaching & schema contracts
 │   │   └── streaks/                    # EMA momentum scoring, streak shields
 │   │
-│   └── tests/                          # Automated Verification Suite (17 files, 77 tests)
+│   └── tests/                          # Automated Verification Suite (17 files, 83 tests)
 │       ├── ai_gateway_security.test.ts # AI gateway payload constraints, rate limiting & header isolation
 │       ├── alpha_simulation.test.ts     # 30-day multi-persona cohort simulation
 │       ├── analytics.test.ts           # Correlation matrices & heatmap logic
@@ -155,12 +155,12 @@ personalized-habit-tracker-with-ai-insights/
 | **Architecture** | Dune Framework for Agents | Vertical feature slicing with zero comments | Production-Ready |
 | **Frontend Runtime** | React 19, TypeScript 5.7, Vite 7 | UI rendering, type safety, and fast bundling | Production-Ready |
 | **Offline Engine** | Workbox, `vite-plugin-pwa` | Service worker asset precaching and offline support | Production-Ready |
-| **Local Storage** | Partitioned `localStorage` / IndexedDB | Local-first persistence isolated per profile | Production-Ready |
+| **Local Storage** | Partitioned `localStorage` | Local-first persistence isolated per profile (IndexedDB on roadmap) | Production-Ready |
 | **Server Gateway** | Node.js Serverless (`@vercel/node`) | Stateless API proxy for AI and authentication | Production-Ready |
 | **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
 | **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
 | **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
-| **Test Suite** | Vitest 3.0 | 77 automated tests across 17 test files | Production-Ready |
+| **Test Suite** | Vitest 3.0 | 83 automated tests across 17 test files | Production-Ready |
 
 ---
 
@@ -232,7 +232,7 @@ To promote cloud accounts and multi-device synchronisation from preview status t
 
 ### 1. Vercel Deployment (Recommended)
 
-The project includes a pre-configured [`vercel.json`](file:///d:/Development/Aether%20Archive/vibing%203/projects/001-personalized-habit-tracker-with-ai-insights/vercel.json) that automatically handles SPA routing while preserving serverless API routes:
+The project includes a pre-configured [`vercel.json`](./vercel.json) that automatically handles SPA routing while preserving serverless API routes:
 
 ```json
 {
@@ -293,7 +293,7 @@ npm run build:app   # Generates production bundle with PWA service worker (dist/
 
 ### Automated Test Suite
 ```bash
-# Runs 77 unit, integration, sync, multi-user, and benchmark tests across 17 test files
+# Runs 83 unit, integration, sync, multi-user, and benchmark tests across 17 test files
 npm test
 
 # Enforces Dune architectural invariants (0 comments, strict vertical feature boundaries)

@@ -14,6 +14,14 @@ const clientRequestCounts = new Map();
 
 function isRateLimited(clientId) {
   const now = Date.now();
+  if (clientRequestCounts.size > 1000) {
+    for (const [key, value] of clientRequestCounts.entries()) {
+      if (now - value.windowStart > RATE_LIMIT_WINDOW_MS) {
+        clientRequestCounts.delete(key);
+      }
+    }
+  }
+
   const record = clientRequestCounts.get(clientId);
 
   if (!record || now - record.windowStart > RATE_LIMIT_WINDOW_MS) {

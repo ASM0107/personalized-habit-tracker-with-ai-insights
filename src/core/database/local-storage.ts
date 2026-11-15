@@ -38,12 +38,8 @@ export class BrowserLocalStoragePort<T extends RecordBase> implements StoragePor
     if (typeof window === "undefined" || !window.localStorage) {
       return;
     }
-    try {
-      const allRecords = Array.from(this.memoryFallback.values());
-      window.localStorage.setItem(this.storageKey, JSON.stringify(allRecords));
-    } catch {
-      return;
-    }
+    const allRecords = Array.from(this.memoryFallback.values());
+    window.localStorage.setItem(this.storageKey, JSON.stringify(allRecords));
   }
 
   public async insert(record: T): Promise<void> {
@@ -51,7 +47,12 @@ export class BrowserLocalStoragePort<T extends RecordBase> implements StoragePor
       throw new Error(`Record with id ${record.id} already exists`);
     }
     this.memoryFallback.set(record.id, Object.freeze({ ...record }));
-    this.persistToStorage();
+    try {
+      this.persistToStorage();
+    } catch {
+      this.memoryFallback.delete(record.id);
+      throw new Error(`Storage write failed: unable to persist record ${record.id}`);
+    }
   }
 
   public async update(id: string, mutator: (current: T) => T): Promise<T> {
@@ -61,16 +62,28 @@ export class BrowserLocalStoragePort<T extends RecordBase> implements StoragePor
     }
     const updated = Object.freeze(mutator(existing));
     this.memoryFallback.set(id, updated);
-    this.persistToStorage();
-    return updated;
+    try {
+      this.persistToStorage();
+      return updated;
+    } catch {
+      this.memoryFallback.set(id, existing);
+      throw new Error(`Storage write failed: unable to update record ${id}`);
+    }
   }
 
   public async delete(id: string): Promise<boolean> {
-    const deleted = this.memoryFallback.delete(id);
-    if (deleted) {
-      this.persistToStorage();
+    const existing = this.memoryFallback.get(id);
+    if (!existing) {
+      return false;
     }
-    return deleted;
+    this.memoryFallback.delete(id);
+    try {
+      this.persistToStorage();
+      return true;
+    } catch {
+      this.memoryFallback.set(id, existing);
+      throw new Error(`Storage write failed: unable to delete record ${id}`);
+    }
   }
 
   public async getById(id: string): Promise<T | null> {

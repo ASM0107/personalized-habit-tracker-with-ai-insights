@@ -73,6 +73,66 @@ function getOrCreateDeviceId(): string {
   return created;
 }
 
+function setupCoordinatorAppliers(
+  coordinator: SyncCoordinator,
+  habitStorage: BrowserLocalStoragePort<Habit>,
+  entryStorage: BrowserLocalStoragePort<HabitEntry>,
+  shieldStorage: BrowserLocalStoragePort<StreakShield>,
+  insightStorage: BrowserLocalStoragePort<StoredInsight>
+): void {
+  coordinator.registerApplier("HABIT", async (env) => {
+    if (env.isDeleted) {
+      await habitStorage.delete(env.entityId);
+    } else if (env.payload) {
+      const existing = await habitStorage.getById(env.entityId);
+      if (existing) {
+        await habitStorage.update(env.entityId, () => env.payload as Habit);
+      } else {
+        await habitStorage.insert(env.payload as Habit);
+      }
+    }
+  });
+
+  coordinator.registerApplier("HABIT_ENTRY", async (env) => {
+    if (env.isDeleted) {
+      await entryStorage.delete(env.entityId);
+    } else if (env.payload) {
+      const existing = await entryStorage.getById(env.entityId);
+      if (existing) {
+        await entryStorage.update(env.entityId, () => env.payload as HabitEntry);
+      } else {
+        await entryStorage.insert(env.payload as HabitEntry);
+      }
+    }
+  });
+
+  coordinator.registerApplier("STREAK_SHIELD", async (env) => {
+    if (env.isDeleted) {
+      await shieldStorage.delete(env.entityId);
+    } else if (env.payload) {
+      const existing = await shieldStorage.getById(env.entityId);
+      if (existing) {
+        await shieldStorage.update(env.entityId, () => env.payload as StreakShield);
+      } else {
+        await shieldStorage.insert(env.payload as StreakShield);
+      }
+    }
+  });
+
+  coordinator.registerApplier("INSIGHT", async (env) => {
+    if (env.isDeleted) {
+      await insightStorage.delete(env.entityId);
+    } else if (env.payload) {
+      const existing = await insightStorage.getById(env.entityId);
+      if (existing) {
+        await insightStorage.update(env.entityId, () => env.payload as StoredInsight);
+      } else {
+        await insightStorage.insert(env.payload as StoredInsight);
+      }
+    }
+  });
+}
+
 export function AppContextProvider({ children }: { readonly children: ReactNode }) {
   const [profileStore] = useState(() => new ProfileStore());
   const [activeProfile, setActiveProfile] = useState<UserProfile>(() => profileStore.getActiveProfile());
@@ -139,7 +199,13 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     const adapter = p.type === "CLOUD" && p.token
       ? new HttpRemoteSyncAdapter({ endpointUrl: "/api/sync", authToken: p.token })
       : new BroadcastChannelSyncAdapter();
-    return new SyncCoordinator(deviceId, clock, adapter, eventBus);
+    const coordinator = new SyncCoordinator(deviceId, clock, adapter, eventBus);
+    const habitStorage = new BrowserLocalStoragePort<Habit>("habits", p.id);
+    const entryStorage = new BrowserLocalStoragePort<HabitEntry>("entries", p.id);
+    const shieldStorage = new BrowserLocalStoragePort<StreakShield>("shields", p.id);
+    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights", p.id);
+    setupCoordinatorAppliers(coordinator, habitStorage, entryStorage, shieldStorage, insightStorage);
+    return coordinator;
   });
 
   const [syncStats, setSyncStats] = useState<SyncStats>(() => syncCoordinator.getStats());
@@ -170,6 +236,7 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
       ? new HttpRemoteSyncAdapter({ endpointUrl: "/api/sync", authToken: switched.token })
       : new BroadcastChannelSyncAdapter();
     const newSync = new SyncCoordinator(deviceId, clock, adapter, eventBus);
+    setupCoordinatorAppliers(newSync, habitStorage, entryStorage, shieldStorage, insightStorage);
     setSyncCoordinator(newSync);
     setSyncStats(newSync.getStats());
 

@@ -5,6 +5,8 @@ import type { EventBusPort } from "../event-bus/index.js";
 
 export type SyncState = "IDLE" | "SYNCING" | "OFFLINE" | "ERROR";
 
+export type InboundEntityApplier = (envelope: SyncEnvelope<unknown>) => Promise<void> | void;
+
 export interface SyncStats {
   readonly state: SyncState;
   readonly pendingOutboundCount: number;
@@ -20,6 +22,8 @@ export class SyncCoordinator {
   private readonly synchronizer: LastWriteWinsSynchronizer<unknown>;
   private readonly eventBus: EventBusPort | null;
   private readonly pendingOutbound: SyncEnvelope<unknown>[] = [];
+  private readonly entityAppliers = new Map<string, InboundEntityApplier>();
+  private readonly queueStorageKey: string;
   private lastSyncedLamport = 0;
   private lastSyncTimestamp = 0;
   private state: SyncState = "IDLE";
@@ -37,9 +41,12 @@ export class SyncCoordinator {
     this.remoteSync = remoteSync;
     this.synchronizer = new LastWriteWinsSynchronizer<unknown>();
     this.eventBus = eventBus ?? null;
+    this.queueStorageKey = `habit_tracker_sync_pending_${deviceId}`;
+
+    this.hydrateQueue();
 
     this.unsubscribeRemote = this.remoteSync.subscribeToRemote((envelopes) => {
-      this.handleIncomingEnvelopes(envelopes);
+      void this.handleIncomingEnvelopes(envelopes);
     });
 
     if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
@@ -47,6 +54,44 @@ export class SyncCoordinator {
         void this.syncNow();
       });
     }
+  }
+
+  private hydrateQueue(): void {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+    try {
+      const raw = window.localStorage.getItem(this.queueStorageKey);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            this.pendingOutbound.push(item);
+          }
+        }
+      }
+    } catch {
+      this.pendingOutbound.length = 0;
+    }
+  }
+
+  private persistQueue(): void {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+    try {
+      if (this.pendingOutbound.length === 0) {
+        window.localStorage.removeItem(this.queueStorageKey);
+      } else {
+        window.localStorage.setItem(this.queueStorageKey, JSON.stringify(this.pendingOutbound));
+      }
+    } catch {
+      return;
+    }
+  }
+
+  public registerApplier(entityType: string, applier: InboundEntityApplier): void {
+    this.entityAppliers.set(entityType, applier);
   }
 
   public getStats(): SyncStats {
@@ -76,6 +121,7 @@ export class SyncCoordinator {
     };
 
     this.pendingOutbound.push(envelope as SyncEnvelope<unknown>);
+    this.persistQueue();
     return envelope;
   }
 
@@ -90,6 +136,7 @@ export class SyncCoordinator {
 
         if (pushResult.success) {
           this.pendingOutbound.splice(0, pushResult.committedCount);
+          this.persistQueue();
           this.lastSyncedLamport = Math.max(this.lastSyncedLamport, pushResult.serverLamportTimestamp);
         } else {
           this.state = pushResult.error?.includes("offline") ? "OFFLINE" : "ERROR";
@@ -100,7 +147,7 @@ export class SyncCoordinator {
 
       const incoming = await this.remoteSync.pullEnvelopes(this.lastSyncedLamport);
       if (incoming.length > 0) {
-        this.handleIncomingEnvelopes(incoming);
+        await this.handleIncomingEnvelopes(incoming);
       }
 
       this.state = "IDLE";
@@ -113,12 +160,21 @@ export class SyncCoordinator {
     }
   }
 
-  private handleIncomingEnvelopes(envelopes: readonly SyncEnvelope<unknown>[]): void {
+  private async handleIncomingEnvelopes(envelopes: readonly SyncEnvelope<unknown>[]): Promise<void> {
     for (const env of envelopes) {
       this.clock.observe(env.lamportTimestamp);
       this.lastSyncedLamport = Math.max(this.lastSyncedLamport, env.lamportTimestamp);
 
       const winningEnvelope = this.synchronizer.resolveWinner(env, env);
+
+      const applier = this.entityAppliers.get(winningEnvelope.entityType);
+      if (applier) {
+        try {
+          await applier(winningEnvelope);
+        } catch {
+          continue;
+        }
+      }
 
       if (this.eventBus) {
         this.eventBus.publish({

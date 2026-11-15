@@ -60,13 +60,9 @@ export class ProfileStore {
     if (typeof window === "undefined" || !window.localStorage) {
       return;
     }
-    try {
-      const all = Array.from(this.profiles.values());
-      window.localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(all));
-      window.localStorage.setItem(STORAGE_KEY_ACTIVE, this.activeProfileId);
-    } catch {
-      return;
-    }
+    const all = Array.from(this.profiles.values());
+    window.localStorage.setItem(STORAGE_KEY_PROFILES, JSON.stringify(all));
+    window.localStorage.setItem(STORAGE_KEY_ACTIVE, this.activeProfileId);
   }
 
   private notify(): void {
@@ -152,6 +148,12 @@ export class ProfileStore {
     if (deleted) {
       if (this.activeProfileId === profileId) {
         this.activeProfileId = "default";
+      }
+      if (typeof window !== "undefined" && window.localStorage) {
+        window.localStorage.removeItem(`habit_tracker_${profileId}_habits`);
+        window.localStorage.removeItem(`habit_tracker_${profileId}_entries`);
+        window.localStorage.removeItem(`habit_tracker_${profileId}_shields`);
+        window.localStorage.removeItem(`habit_tracker_${profileId}_insights`);
       }
       this.notify();
     }

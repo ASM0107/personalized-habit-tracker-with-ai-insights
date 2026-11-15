@@ -119,7 +119,7 @@ describe("Local Profile Lifecycle & Resilient Partitioning", () => {
     expect(preservedHabits[0]?.id).toBe("hydrate-goal");
   });
 
-  it("rejects deletion of default profile and handles custom profile cleanup", async () => {
+  it("rejects deletion of default profile and handles custom profile partition cleanup", async () => {
     const profileStore = new ProfileStore();
     const deleteDefaultResult = profileStore.deleteProfile("default");
     expect(deleteDefaultResult).toBe(false);
@@ -128,10 +128,40 @@ describe("Local Profile Lifecycle & Resilient Partitioning", () => {
     const temporaryProfile = profileStore.createLocalProfile("Temporary");
     expect(profileStore.getActiveProfile().id).toBe(temporaryProfile.id);
 
+    window.localStorage.setItem(`habit_tracker_${temporaryProfile.id}_habits`, JSON.stringify([{ id: "temp-habit" }]));
+    expect(window.localStorage.getItem(`habit_tracker_${temporaryProfile.id}_habits`)).not.toBeNull();
+
     const deleteTempResult = profileStore.deleteProfile(temporaryProfile.id);
     expect(deleteTempResult).toBe(true);
     expect(profileStore.getActiveProfile().id).toBe("default");
     expect(profileStore.getAllProfiles().some((p) => p.id === temporaryProfile.id)).toBe(false);
+    expect(window.localStorage.getItem(`habit_tracker_${temporaryProfile.id}_habits`)).toBeNull();
+  });
+
+  it("rolls back in-memory mutation and throws error when local storage write fails", async () => {
+    const brokenStorage = new BrowserLocalStoragePort<Habit>("broken_test", "default");
+    const failingItem: Habit = {
+      id: "failing-habit",
+      title: "Failing Habit",
+      category: "Test",
+      targetType: "BOOLEAN",
+      targetValue: 1,
+      schedule: HabitScheduler.createDailySchedule("2026-11-15"),
+      status: "ACTIVE",
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+
+    const originalSetItem = window.localStorage.setItem;
+    window.localStorage.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+
+    await expect(brokenStorage.insert(failingItem)).rejects.toThrow("Storage write failed");
+    const inMemoryItem = await brokenStorage.getById("failing-habit");
+    expect(inMemoryItem).toBeNull();
+
+    window.localStorage.setItem = originalSetItem;
   });
 
   it("handles rapid successive habit entries deterministically without race conditions", async () => {

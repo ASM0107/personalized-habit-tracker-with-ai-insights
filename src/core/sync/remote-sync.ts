@@ -141,8 +141,6 @@ export class HttpRemoteSyncAdapter implements RemoteSyncPort {
       }
 
       return received;
-    } catch {
-      return [];
     } finally {
       clearTimeout(timeoutId);
     }

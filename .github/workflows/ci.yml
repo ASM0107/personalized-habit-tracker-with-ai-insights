@@ -26,11 +26,11 @@ jobs:
       - name: Validate Dune architecture rules
         run: npm run test:arch
 
-      - name: Run automated test suites
-        run: npm test
-
       - name: Typecheck TypeScript source
         run: npm run build
 
       - name: Build production bundle and PWA service worker
         run: npm run build:app
+
+      - name: Run automated test suites
+        run: npm test
