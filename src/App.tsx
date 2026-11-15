@@ -243,6 +243,16 @@ export function App() {
     });
 
     const h2 = await habitStore.createHabit({
+      id: "sample-workout",
+      title: "Morning Workout",
+      category: "Fitness",
+      targetType: "DURATION",
+      targetValue: 30,
+      unit: "mins",
+      schedule: HabitScheduler.createDailySchedule(formatDate(14)),
+    });
+
+    const h3 = await habitStore.createHabit({
       id: "sample-hydration",
       title: "Daily Hydration",
       category: "Health",
@@ -252,7 +262,7 @@ export function App() {
       schedule: HabitScheduler.createDailySchedule(formatDate(14)),
     });
 
-    const h3 = await habitStore.createHabit({
+    const h4 = await habitStore.createHabit({
       id: "sample-reading",
       title: "Evening Reading",
       category: "Personal Growth",
@@ -264,13 +274,28 @@ export function App() {
 
     for (let dayOffset = 14; dayOffset >= 1; dayOffset -= 1) {
       const dateKey = formatDate(dayOffset);
-      await habitStore.recordCheckIn({ habitId: h1.id, dateKey, recordedValue: 20 });
-      await habitStore.recordCheckIn({ habitId: h2.id, dateKey, recordedValue: 8 });
+      const isWorkCrunch = dayOffset <= 3;
+      const isWeekendRest = dayOffset === 7 || dayOffset === 6;
 
-      if (dayOffset <= 3) {
-        await habitStore.skipHabit(h3.id, dateKey, "Late work meetings");
+      if (isWorkCrunch) {
+        await habitStore.skipHabit(h4.id, dateKey, "Late work meetings");
+        await habitStore.skipHabit(h2.id, dateKey, "Fatigue from late night");
+        await habitStore.recordCheckIn({ habitId: h3.id, dateKey, recordedValue: 4 });
+        if (dayOffset <= 2) {
+          await habitStore.skipHabit(h1.id, dateKey, "Rushed morning");
+        } else {
+          await habitStore.recordCheckIn({ habitId: h1.id, dateKey, recordedValue: 20 });
+        }
+      } else if (isWeekendRest) {
+        await habitStore.recordCheckIn({ habitId: h1.id, dateKey, recordedValue: 20 });
+        await habitStore.skipHabit(h2.id, dateKey, "Weekend recovery rest");
+        await habitStore.recordCheckIn({ habitId: h3.id, dateKey, recordedValue: 8 });
+        await habitStore.recordCheckIn({ habitId: h4.id, dateKey, recordedValue: 30 });
       } else {
-        await habitStore.recordCheckIn({ habitId: h3.id, dateKey, recordedValue: 30 });
+        await habitStore.recordCheckIn({ habitId: h1.id, dateKey, recordedValue: 20 });
+        await habitStore.recordCheckIn({ habitId: h2.id, dateKey, recordedValue: 30 });
+        await habitStore.recordCheckIn({ habitId: h3.id, dateKey, recordedValue: 8 });
+        await habitStore.recordCheckIn({ habitId: h4.id, dateKey, recordedValue: 30 });
       }
     }
 
