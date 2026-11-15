@@ -10,10 +10,17 @@ Traditional habit trackers rely heavily on binary streak systems, penalising use
 
 This application focuses on measuring sustainable momentum rather than enforcing fragile perfection. It combines deterministic behavioural heuristics with AI-powered coaching to help users understand adherence patterns, identify friction, and adapt targets responsibly.
 
+### Operational Status & Architectural Maturity
+
+To clearly distinguish **implementation completeness** from **operational reliability**:
+
+- **Production-Ready (Local-First Core):** The core habit tracking engine, multi-profile switcher, EMA momentum calculations, streak rest shields, behavioral analytics heatmaps, PWA offline service workers, and the server-side Gemini AI gateway (`/api/ai/*`) are fully production-ready. They rely on durable client-side storage (`localStorage`/IndexedDB) and stateless upstream API execution.
+- **Architectural Milestone / Preview (Cloud Sync):** The cryptographic authentication routines, stateless token verification, Lamport clocks, and Last-Write-Wins (LWW) conflict-resolution logic are fully implemented and verified by automated test suites. However, because the serverless backend currently uses ephemeral instance-local storage, cloud accounts and cross-device synchronisation are **not yet reliable for production use** until backed by a shared, durable PostgreSQL database.
+
 ### Core Principles
 
 - **Consistency Over Perfection:** Replace binary streaks with continuous exponential moving average (EMA) momentum metrics and streak rest shields.
-- **Local-First & Multi-User Flexibility:** Users can immediately track habits with zero sign-up using partitioned local profiles, or link a cloud account for cross-device synchronisation.
+- **Local-First & Multi-User Flexibility:** Users can immediately track habits with zero sign-up using partitioned local profiles, or test cloud accounts for cross-device synchronisation.
 - **Zero Client-Side Secret Exposure:** AI credentials (`GEMINI_API_KEY`) and password hashes remain strictly server-side, eliminating credential leakage in multi-user deployments.
 - **Deterministic Offline Resilience:** Core habit tracking, momentum calculations, and behavioral analytics operate 100% offline via Progressive Web App (PWA) service workers.
 - **Dune Architectural Foundation:** Strict vertical feature slicing, zero comments in source code, strict import boundaries, and principled root-cause resolution.
@@ -54,20 +61,20 @@ Contextual habit modification suggestions powered by Google's Gemini 3.5 Flash L
 - **Resilient Fallback:** Automatically degrades to local heuristic rules if the network is disconnected or serverless upstream quotas are reached.
 
 ### 5. Multi-User Identity: Local Profiles & Cloud Accounts
-Designed to serve both privacy-focused guest users and users needing multi-device synchronisation:
-- **Local Profile Switcher (Zero Sign-Up):**
+Designed to serve both privacy-focused guest users and users testing multi-device synchronisation:
+- **Local Profile Switcher (Zero Sign-Up — Production-Ready):**
   - Switch instantly between profiles (e.g. *Personal*, *Work*, *Fitness*, *Family Member*).
-  - Each profile operates within an isolated `localStorage` database partition (`habit_tracker_<profileId>_*`).
-  - Supports profile creation, switching, renaming, and custom profile deletion without cloud registration.
-- **Cloud Accounts (Cross-Device Access):**
+  - Each profile operates within an isolated, persistent `localStorage` database partition (`habit_tracker_<profileId>_*`).
+  - Supports profile creation, switching, renaming, and custom profile deletion without cloud registration or external dependencies.
+- **Cloud Accounts (Cross-Device Access — Preview):**
   - Optional account registration and authentication via email and password.
   - Cryptographically secure: passwords hashed with `scrypt` using unique random 16-byte salts.
-  - Stateless HMAC-SHA256 bearer tokens, allowing seamless authentication across distributed serverless microVMs without session stickiness issues.
+  - **Stateless Authentication vs. Persistence Decoupling:** Stateless HMAC-SHA256 bearer tokens eliminate the need for server-side session affinity (any serverless instance with `AUTH_SECRET` can verify the token). However, stateless tokens do **not** eliminate the need for shared persistent storage; serverless instances do not share local filesystem state, making a durable database necessary for reliable synchronisation across multiple instances.
 
 ### 6. Cloud & Peer Synchronisation Engine
 - **Sync Endpoints:** Backed by serverless endpoints (`POST /api/sync/push` and `GET /api/sync/pull`).
 - **Conflict-Free Resolution:** Uses **Lamport logical clocks** and **Last-Write-Wins (LWW)** deterministic conflict resolution.
-- **Cross-Device Parity:** Habit updates committed on a phone automatically propagate to desktop sessions when logged into the same cloud account.
+- **Cross-Device Parity:** Habit updates committed on one device propagate to another when both sessions connect to a shared synchronisation backend.
 
 ### 7. Progressive Web App (PWA) Offline Experience
 - **Precached Assets:** Workbox service worker precaches all core application assets (`dist/`), ensuring instant startup.
@@ -140,17 +147,17 @@ personalized-habit-tracker-with-ai-insights/
 
 ## Technology Stack
 
-| Layer | Technology | Purpose |
-|---|---|---|
-| **Architecture** | Dune Framework for Agents | Vertical feature slicing with zero comments |
-| **Frontend Runtime** | React 19, TypeScript 5.7, Vite 7 | UI rendering, type safety, and fast bundling |
-| **Offline Engine** | Workbox, `vite-plugin-pwa` | Service worker asset precaching and offline support |
-| **Local Storage** | Partitioned `localStorage` / IndexedDB | Local-first persistence isolated per profile |
-| **Server Gateway** | Node.js Serverless (`@vercel/node`) | Stateless API proxy for AI and authentication |
-| **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens |
-| **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution |
-| **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching |
-| **Test Suite** | Vitest 3.0 | 57 automated tests across 14 test files |
+| Layer | Technology | Purpose | Operational Status |
+|---|---|---|---|
+| **Architecture** | Dune Framework for Agents | Vertical feature slicing with zero comments | Production-Ready |
+| **Frontend Runtime** | React 19, TypeScript 5.7, Vite 7 | UI rendering, type safety, and fast bundling | Production-Ready |
+| **Offline Engine** | Workbox, `vite-plugin-pwa` | Service worker asset precaching and offline support | Production-Ready |
+| **Local Storage** | Partitioned `localStorage` / IndexedDB | Local-first persistence isolated per profile | Production-Ready |
+| **Server Gateway** | Node.js Serverless (`@vercel/node`) | Stateless API proxy for AI and authentication | Production-Ready |
+| **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
+| **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
+| **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
+| **Test Suite** | Vitest 3.0 | 57 automated tests across 14 test files | Production-Ready |
 
 ---
 
@@ -196,6 +203,28 @@ The server gateway exposes RESTful endpoints for cloud multi-tenancy and data sy
 
 ---
 
+## Known Limitations & Production Database Requirement
+
+> [!WARNING]
+> **Ephemeral Serverless Cloud Persistence:**
+> Cloud persistence is currently backed by instance-local ephemeral filesystem storage. Data is not guaranteed to survive function-instance replacement or remain consistent across serverless instances. Consequently, cloud registration, authentication, and synchronisation are not yet reliable for production use. A shared, durable database is required.
+
+### Stateless Authentication vs. Shared Persistence
+
+It is important to separate authentication mechanics from persistence guarantees:
+- **Stateless Tokens:** HMAC-SHA256 bearer tokens eliminate the need for server-side session affinity. Any serverless instance configured with `AUTH_SECRET` can cryptographically verify incoming requests without contacting an auth database.
+- **The Persistence Challenge:** Stateless tokens do *not* solve data persistence. Because serverless microVMs maintain isolated in-memory and `/tmp` filesystems, an account created on one instance or envelopes pushed to one instance will not exist on another instance.
+
+### Recommended Production Architecture
+
+To promote cloud accounts and multi-device synchronisation from preview status to production reliability, connect a managed **PostgreSQL** database:
+- **Neon** (Serverless PostgreSQL): Ideal for auto-scaling relational user accounts and transactional synchronisation envelope writes.
+- **Supabase** (Managed PostgreSQL): Provides durable relational storage, row-level security (RLS), and database backups.
+
+*(Note: Key-value stores such as Redis are suitable for ephemeral caching or ephemeral pub/sub queues, but PostgreSQL is strongly recommended as the authoritative relational datastore for user accounts and versioned synchronisation logs).*
+
+---
+
 ## Deployment
 
 ### 1. Vercel Deployment (Recommended)
@@ -229,7 +258,7 @@ npx vercel --prod
 
 ### 2. Standalone Container / Node.js Production Server
 
-For Docker or self-hosted virtual machines, run the built-in HTTP server:
+For Docker or self-hosted virtual machines with a persistent mounted volume, run the built-in HTTP server:
 
 ```bash
 # 1. Build TypeScript and Vite frontend
@@ -238,16 +267,6 @@ npm run build && npm run build:app
 # 2. Start standalone server on PORT 3000
 npm start
 ```
-
----
-
-## Known Limitations
-
-> [!WARNING]
-> **Ephemeral Serverless Cloud Storage:**
-> In the current serverless implementation on Vercel, cloud user accounts and sync envelopes are maintained in memory and backed by `/tmp/habit_tracker_cloud_storage.json`. 
-> 
-> Because serverless environments spin up ephemeral microVM instances across regions, data written to `/tmp` on one instance is not shared with cold-started instances in other regions. For long-term production deployments across multi-region serverless clusters, connect a managed persistent database (such as Neon PostgreSQL, Supabase, or Upstash Redis).
 
 ---
 
