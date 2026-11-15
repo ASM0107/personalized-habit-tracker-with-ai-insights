@@ -75,7 +75,8 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readJsonBody(req);
       const apiKey = process.env.GEMINI_API_KEY || "";
-      const result = await handleAiInferenceRequest(payload, apiKey);
+      const clientIp = req.socket?.remoteAddress || "local";
+      const result = await handleAiInferenceRequest(payload, apiKey, clientIp);
       res.writeHead(result.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {
@@ -88,7 +89,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/auth/register" && req.method === "POST") {
     try {
       const payload = await readJsonBody(req);
-      const result = handleRegister(payload);
+      const clientIp = req.socket?.remoteAddress || "local";
+      const result = handleRegister(payload, clientIp);
       res.writeHead(result.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {
@@ -101,7 +103,8 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === "/api/auth/login" && req.method === "POST") {
     try {
       const payload = await readJsonBody(req);
-      const result = handleLogin(payload);
+      const clientIp = req.socket?.remoteAddress || "local";
+      const result = handleLogin(payload, clientIp);
       res.writeHead(result.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {

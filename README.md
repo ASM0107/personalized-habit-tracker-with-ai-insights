@@ -123,10 +123,12 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── insights/                   # Heuristic detection, AI coaching & schema contracts
 │   │   └── streaks/                    # EMA momentum scoring, streak shields
 │   │
-│   └── tests/                          # Automated Verification Suite (14 files, 57 tests)
+│   └── tests/                          # Automated Verification Suite (17 files, 77 tests)
+│       ├── ai_gateway_security.test.ts # AI gateway payload constraints, rate limiting & header isolation
 │       ├── alpha_simulation.test.ts     # 30-day multi-persona cohort simulation
 │       ├── analytics.test.ts           # Correlation matrices & heatmap logic
 │       ├── architecture.test.ts        # Dune architectural boundary & comment enforcement
+│       ├── cloud_auth_security.test.ts # Token signature tampering, 7-day expiration & brute-force protection
 │       ├── core.test.ts                # EventBus, navigation & storage tests
 │       ├── e2e_verification.test.ts    # PWA, offline sync & AI fallback E2E tests
 │       ├── frontend.test.ts            # View rendering & interactive state
@@ -134,6 +136,7 @@ personalized-habit-tracker-with-ai-insights/
 │       ├── hardening_and_performance.test.ts # Latency benchmarks & input sanitisation
 │       ├── insights.test.ts            # Pattern detection & recommendation schemas
 │       ├── integration_workflows.test.ts # End-to-end multi-feature workflows
+│       ├── local_profile_lifecycle.test.ts # Corruption recovery, profile namespaces & rapid check-in determinism
 │       ├── multi_user.test.ts          # Local profile isolation & cryptographic cloud sync
 │       ├── streaks.test.ts             # Momentum calculations & streak shield depletion
 │       ├── sync_and_pwa.test.ts        # Lamport synchronisation & service worker precaching
@@ -157,7 +160,7 @@ personalized-habit-tracker-with-ai-insights/
 | **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
 | **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
 | **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
-| **Test Suite** | Vitest 3.0 | 57 automated tests across 14 test files | Production-Ready |
+| **Test Suite** | Vitest 3.0 | 77 automated tests across 17 test files | Production-Ready |
 
 ---
 
@@ -290,7 +293,7 @@ npm run build:app   # Generates production bundle with PWA service worker (dist/
 
 ### Automated Test Suite
 ```bash
-# Runs 57 unit, integration, sync, multi-user, and benchmark tests across 14 test files
+# Runs 77 unit, integration, sync, multi-user, and benchmark tests across 17 test files
 npm test
 
 # Enforces Dune architectural invariants (0 comments, strict vertical feature boundaries)

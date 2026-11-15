@@ -7,6 +7,7 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const result = handleRegister(req.body);
+  const clientIp = ((req.headers["x-forwarded-for"] as string) || req.socket?.remoteAddress || "127.0.0.1").split(",")[0].trim();
+  const result = handleRegister(req.body, clientIp);
   res.status(result.status).json(result.body);
 }

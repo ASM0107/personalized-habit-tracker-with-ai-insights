@@ -20,9 +20,13 @@ export class BrowserLocalStoragePort<T extends RecordBase> implements StoragePor
     try {
       const raw = window.localStorage.getItem(this.storageKey);
       if (raw) {
-        const parsed = JSON.parse(raw) as readonly T[];
-        for (const item of parsed) {
-          this.memoryFallback.set(item.id, Object.freeze({ ...item }));
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          for (const item of parsed) {
+            if (item && typeof item === "object" && typeof item.id === "string") {
+              this.memoryFallback.set(item.id, Object.freeze({ ...item }));
+            }
+          }
         }
       }
     } catch {

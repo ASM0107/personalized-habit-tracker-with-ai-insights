@@ -5,6 +5,19 @@ import path from "node:path";
 
 const STORAGE_FILE = path.join(os.tmpdir(), "habit_tracker_cloud_storage.json");
 const AUTH_SECRET = process.env.AUTH_SECRET || "habit_tracker_super_secure_secret_key_2026";
+const authRateLimitMap = new Map();
+
+function checkAuthRateLimit(key, limit = 20, windowMs = 60000) {
+  const now = Date.now();
+  const entry = authRateLimitMap.get(key) || [];
+  const validTimestamps = entry.filter((t) => now - t < windowMs);
+  if (validTimestamps.length >= limit) {
+    return false;
+  }
+  validTimestamps.push(now);
+  authRateLimitMap.set(key, validTimestamps);
+  return true;
+}
 
 let dbState = {
   users: {},
@@ -37,12 +50,12 @@ function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
 
-function signToken(user) {
+export function signToken(user, customTimestamp = Date.now()) {
   const payload = JSON.stringify({
     id: user.id,
     email: user.email,
     name: user.name,
-    ts: Date.now(),
+    ts: customTimestamp,
   });
   const payloadB64 = Buffer.from(payload).toString("base64url");
   const hmac = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest("base64url");
@@ -65,13 +78,23 @@ export function verifyToken(rawToken) {
       return null;
     }
     const user = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf-8"));
+    if (!user || typeof user !== "object" || !user.id || !user.email) {
+      return null;
+    }
+    const maxTokenAgeMs = 7 * 24 * 60 * 60 * 1000;
+    if (typeof user.ts !== "number" || Date.now() - user.ts > maxTokenAgeMs) {
+      return null;
+    }
     return user;
   } catch {
     return null;
   }
 }
 
-export function handleRegister(payload) {
+export function handleRegister(payload, clientIp = "local") {
+  if (!checkAuthRateLimit(`reg_${clientIp}`, 15, 60000)) {
+    return { status: 429, body: { error: "Too many registration attempts. Please wait." } };
+  }
   loadState();
   const email = (payload?.email || "").trim().toLowerCase();
   const password = payload?.password || "";
@@ -122,7 +145,10 @@ export function handleRegister(payload) {
   };
 }
 
-export function handleLogin(payload) {
+export function handleLogin(payload, clientIp = "local") {
+  if (!checkAuthRateLimit(`login_${clientIp}`, 20, 60000)) {
+    return { status: 429, body: { error: "Too many login attempts. Please wait." } };
+  }
   loadState();
   const email = (payload?.email || "").trim().toLowerCase();
   const password = payload?.password || "";

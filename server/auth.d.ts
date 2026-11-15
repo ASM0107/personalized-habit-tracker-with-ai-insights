@@ -43,8 +43,17 @@ export interface PullResult {
   };
 }
 
-export function handleRegister(payload: { email?: string; password?: string; name?: string }): RegisterResult;
-export function handleLogin(payload: { email?: string; password?: string }): LoginResult;
-export function verifyToken(rawToken: string): { id: string; email: string; name: string; createdAt: number } | null;
+export interface TokenPayload {
+  readonly id: string;
+  readonly email: string;
+  readonly name: string;
+  readonly ts?: number;
+  readonly createdAt?: number;
+}
+
+export function signToken(user: { id: string; email: string; name: string }, customTimestamp?: number): string;
+export function handleRegister(payload: { email?: string; password?: string; name?: string }, clientIp?: string): RegisterResult;
+export function handleLogin(payload: { email?: string; password?: string }, clientIp?: string): LoginResult;
+export function verifyToken(rawToken: string): TokenPayload | null;
 export function handleSyncPush(userId: string, envelopes: unknown[]): PushResult;
 export function handleSyncPull(userId: string, sinceLamport?: number): PullResult;
