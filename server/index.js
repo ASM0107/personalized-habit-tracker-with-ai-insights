@@ -3,6 +3,13 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { handleAiInferenceRequest } from "./gateway.js";
+import {
+  handleRegister,
+  handleLogin,
+  verifyToken,
+  handleSyncPush,
+  handleSyncPull,
+} from "./auth.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +45,22 @@ const MIME_TYPES = {
   ".ico": "image/x-icon",
 };
 
+function readJsonBody(req) {
+  return new Promise((resolve, reject) => {
+    let raw = "";
+    req.on("data", (chunk) => {
+      raw += chunk;
+    });
+    req.on("end", () => {
+      try {
+        resolve(raw ? JSON.parse(raw) : {});
+      } catch (err) {
+        reject(err);
+      }
+    });
+  });
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
@@ -49,23 +72,87 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === "/api/ai/infer" && req.method === "POST") {
-    let rawBody = "";
-    req.on("data", (chunk) => {
-      rawBody += chunk;
-    });
+    try {
+      const payload = await readJsonBody(req);
+      const apiKey = process.env.GEMINI_API_KEY || "";
+      const result = await handleAiInferenceRequest(payload, apiKey);
+      res.writeHead(result.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Malformed JSON payload in request" }));
+    }
+    return;
+  }
 
-    req.on("end", async () => {
-      try {
-        const payload = JSON.parse(rawBody);
-        const apiKey = process.env.GEMINI_API_KEY || "";
-        const result = await handleAiInferenceRequest(payload, apiKey);
-        res.writeHead(result.status, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(result.body));
-      } catch (err) {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Malformed JSON payload in request" }));
-      }
-    });
+  if (url.pathname === "/api/auth/register" && req.method === "POST") {
+    try {
+      const payload = await readJsonBody(req);
+      const result = handleRegister(payload);
+      res.writeHead(result.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Malformed request payload" }));
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/auth/login" && req.method === "POST") {
+    try {
+      const payload = await readJsonBody(req);
+      const result = handleLogin(payload);
+      res.writeHead(result.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Malformed request payload" }));
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/auth/me" && req.method === "GET") {
+    const user = verifyToken(req.headers.authorization || "");
+    if (!user) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ user: { id: user.id, email: user.email, name: user.name, type: "CLOUD" } }));
+    return;
+  }
+
+  if (url.pathname === "/api/sync/push" && req.method === "POST") {
+    const user = verifyToken(req.headers.authorization || "");
+    if (!user) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    try {
+      const payload = await readJsonBody(req);
+      const result = handleSyncPush(user.id, payload.envelopes);
+      res.writeHead(result.status, { "Content-Type": "application/json" });
+      res.end(JSON.stringify(result.body));
+    } catch {
+      res.writeHead(400, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Malformed request payload" }));
+    }
+    return;
+  }
+
+  if (url.pathname === "/api/sync/pull" && req.method === "GET") {
+    const user = verifyToken(req.headers.authorization || "");
+    if (!user) {
+      res.writeHead(401, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ error: "Unauthorized" }));
+      return;
+    }
+    const since = url.searchParams.get("since") || "0";
+    const result = handleSyncPull(user.id, Number.parseInt(since, 10));
+    res.writeHead(result.status, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(result.body));
     return;
   }
 

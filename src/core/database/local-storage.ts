@@ -4,8 +4,12 @@ export class BrowserLocalStoragePort<T extends RecordBase> implements StoragePor
   private readonly storageKey: string;
   private readonly memoryFallback = new Map<string, T>();
 
-  public constructor(collectionName: string) {
-    this.storageKey = `habit_tracker_${collectionName}`;
+  public constructor(collectionName: string, partitionKey = "default") {
+    if (partitionKey === "default") {
+      this.storageKey = `habit_tracker_${collectionName}`;
+    } else {
+      this.storageKey = `habit_tracker_${partitionKey}_${collectionName}`;
+    }
     this.hydrateFromStorage();
   }
 

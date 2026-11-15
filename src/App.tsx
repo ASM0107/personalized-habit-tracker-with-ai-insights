@@ -26,6 +26,10 @@ import {
   type SystemAnalyticsOverview,
   type LoggedDayRecord,
 } from "./features/analytics/index.js";
+import {
+  ProfileSwitcher,
+  AuthModal,
+} from "./features/identity/index.js";
 
 type NavTab = "DASHBOARD" | "MOMENTUM" | "INSIGHTS" | "ANALYTICS";
 
@@ -34,6 +38,9 @@ export function App() {
     habitStore,
     streakStore,
     insightStore,
+    profileStore,
+    switchProfile,
+    onAuthSuccess,
     activeDateKey,
     setActiveDateKey,
     refreshCounter,
@@ -47,6 +54,7 @@ export function App() {
   const [activeTab, setActiveTab] = useState<NavTab>("DASHBOARD");
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [habits, setHabits] = useState<readonly Habit[]>([]);
   const [entriesMap, setEntriesMap] = useState<ReadonlyMap<string, HabitEntry>>(new Map());
   const [metricsList, setMetricsList] = useState<readonly ResilienceMetrics[]>([]);
@@ -327,6 +335,12 @@ export function App() {
             <span>Sync: {syncStats.state === "IDLE" ? "Synced" : syncStats.state}</span>
           </button>
 
+          <ProfileSwitcher
+            profileStore={profileStore}
+            onOpenAuthModal={() => setIsAuthModalOpen(true)}
+            onProfileChanged={(p) => switchProfile(p.id)}
+          />
+
           <div className="date-picker-group">
             <span className="control-label">Tracking Date:</span>
             <input
@@ -461,6 +475,12 @@ export function App() {
       <AppSettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
+      />
+
+      <AuthModal
+        isOpen={isAuthModalOpen}
+        onClose={() => setIsAuthModalOpen(false)}
+        onAuthSuccess={(user, token) => onAuthSuccess(user, token)}
       />
     </div>
   );

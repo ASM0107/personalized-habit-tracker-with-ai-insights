@@ -27,11 +27,19 @@ import {
   InsightStore,
   type StoredInsight,
 } from "../../features/insights/index.js";
+import {
+  ProfileStore,
+  type UserProfile,
+} from "../../features/identity/index.js";
 
 export interface AppContextValue {
   readonly habitStore: HabitStore;
   readonly streakStore: StreakStore;
   readonly insightStore: InsightStore;
+  readonly profileStore: ProfileStore;
+  readonly activeProfile: UserProfile;
+  readonly switchProfile: (profileId: string) => void;
+  readonly onAuthSuccess: (user: UserProfile, token: string) => void;
   readonly eventBus: EventBusPort;
   readonly clock: ClockPort;
   readonly navigation: NavigationPort;
@@ -66,6 +74,9 @@ function getOrCreateDeviceId(): string {
 }
 
 export function AppContextProvider({ children }: { readonly children: ReactNode }) {
+  const [profileStore] = useState(() => new ProfileStore());
+  const [activeProfile, setActiveProfile] = useState<UserProfile>(() => profileStore.getActiveProfile());
+
   const [eventBus] = useState(() => new InMemoryEventBus());
   const [clock] = useState(() => new LamportClock());
   const [navigation] = useState(() => new StackNavigationRouter());
@@ -100,29 +111,84 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
 
   const [activeDateKey, setActiveDateKey] = useState(getTodayDateKey);
 
-  const [habitStore] = useState(() => {
-    const habitStorage = new BrowserLocalStoragePort<Habit>("habits");
-    const entryStorage = new BrowserLocalStoragePort<HabitEntry>("entries");
+  const [habitStore, setHabitStore] = useState(() => {
+    const p = profileStore.getActiveProfile().id;
+    const habitStorage = new BrowserLocalStoragePort<Habit>("habits", p);
+    const entryStorage = new BrowserLocalStoragePort<HabitEntry>("entries", p);
     return new HabitStore(habitStorage, entryStorage, eventBus, clock);
   });
 
-  const [streakStore] = useState(() => {
-    const shieldStorage = new BrowserLocalStoragePort<StreakShield>("shields");
+  const [streakStore, setStreakStore] = useState(() => {
+    const p = profileStore.getActiveProfile().id;
+    const shieldStorage = new BrowserLocalStoragePort<StreakShield>("shields", p);
     return new StreakStore(shieldStorage, eventBus);
   });
 
   const [insightStore, setInsightStore] = useState(() => {
-    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights");
+    const p = profileStore.getActiveProfile().id;
+    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights", p);
     const initialClient = geminiApiKey.length > 0
       ? new GeminiInferenceClient({ apiKey: geminiApiKey })
       : new GeminiInferenceClient();
     return new InsightStore(insightStorage, initialClient, eventBus);
   });
 
+  const [syncCoordinator, setSyncCoordinator] = useState(() => {
+    const p = profileStore.getActiveProfile();
+    const deviceId = getOrCreateDeviceId();
+    const adapter = p.type === "CLOUD" && p.token
+      ? new HttpRemoteSyncAdapter({ endpointUrl: "/api/sync", authToken: p.token })
+      : new BroadcastChannelSyncAdapter();
+    return new SyncCoordinator(deviceId, clock, adapter, eventBus);
+  });
+
+  const [syncStats, setSyncStats] = useState<SyncStats>(() => syncCoordinator.getStats());
+
+  const triggerRefresh = () => {
+    setRefreshCounter((prev) => prev + 1);
+  };
+
+  const switchProfile = (profileId: string) => {
+    const switched = profileStore.switchProfile(profileId);
+    setActiveProfile(switched);
+
+    const habitStorage = new BrowserLocalStoragePort<Habit>("habits", switched.id);
+    const entryStorage = new BrowserLocalStoragePort<HabitEntry>("entries", switched.id);
+    setHabitStore(new HabitStore(habitStorage, entryStorage, eventBus, clock));
+
+    const shieldStorage = new BrowserLocalStoragePort<StreakShield>("shields", switched.id);
+    setStreakStore(new StreakStore(shieldStorage, eventBus));
+
+    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights", switched.id);
+    const client = geminiApiKey.length > 0
+      ? new GeminiInferenceClient({ apiKey: geminiApiKey })
+      : new GeminiInferenceClient();
+    setInsightStore(new InsightStore(insightStorage, client, eventBus));
+
+    const deviceId = getOrCreateDeviceId();
+    const adapter = switched.type === "CLOUD" && switched.token
+      ? new HttpRemoteSyncAdapter({ endpointUrl: "/api/sync", authToken: switched.token })
+      : new BroadcastChannelSyncAdapter();
+    const newSync = new SyncCoordinator(deviceId, clock, adapter, eventBus);
+    setSyncCoordinator(newSync);
+    setSyncStats(newSync.getStats());
+
+    if (switched.type === "CLOUD" && switched.token) {
+      void newSync.syncNow().then((s) => setSyncStats(s));
+    }
+
+    triggerRefresh();
+  };
+
+  const onAuthSuccess = (cloudUser: UserProfile, token: string) => {
+    profileStore.addOrUpdateCloudAccount(cloudUser, token);
+    switchProfile(cloudUser.id);
+  };
+
   const setGeminiApiKey = (key: string) => {
     GeminiInferenceClient.storeApiKeyLocally(key);
     setGeminiApiKeyState(key);
-    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights");
+    const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights", activeProfile.id);
     const newClient = key.trim().length > 0
       ? new GeminiInferenceClient({ apiKey: key.trim() })
       : new GeminiInferenceClient();
@@ -130,27 +196,10 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     triggerRefresh();
   };
 
-  const [syncCoordinator] = useState(() => {
-    const deviceId = getOrCreateDeviceId();
-    const remoteUrl = typeof import.meta !== "undefined" && import.meta.env?.VITE_REMOTE_SYNC_URL
-      ? import.meta.env.VITE_REMOTE_SYNC_URL
-      : "";
-    const adapter = remoteUrl.length > 0
-      ? new HttpRemoteSyncAdapter({ endpointUrl: remoteUrl })
-      : new BroadcastChannelSyncAdapter();
-    return new SyncCoordinator(deviceId, clock, adapter, eventBus);
-  });
-
-  const [syncStats, setSyncStats] = useState<SyncStats>(() => syncCoordinator.getStats());
-
   const syncNow = async () => {
     const updated = await syncCoordinator.syncNow();
     setSyncStats(updated);
     triggerRefresh();
-  };
-
-  const triggerRefresh = () => {
-    setRefreshCounter((prev) => prev + 1);
   };
 
   useEffect(() => {
@@ -192,6 +241,10 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     habitStore,
     streakStore,
     insightStore,
+    profileStore,
+    activeProfile,
+    switchProfile,
+    onAuthSuccess,
     eventBus,
     clock,
     navigation,
