@@ -8,6 +8,8 @@ import {
   BroadcastChannelSyncAdapter,
   HttpRemoteSyncAdapter,
   SyncCoordinator,
+  bindStorageToSync,
+  LocalTombstoneStore,
   type AppScreen,
   type EventBusPort,
   type ClockPort,
@@ -75,62 +77,17 @@ function getOrCreateDeviceId(): string {
 
 function setupCoordinatorAppliers(
   coordinator: SyncCoordinator,
+  profileId: string,
   habitStorage: BrowserLocalStoragePort<Habit>,
   entryStorage: BrowserLocalStoragePort<HabitEntry>,
   shieldStorage: BrowserLocalStoragePort<StreakShield>,
   insightStorage: BrowserLocalStoragePort<StoredInsight>
 ): void {
-  coordinator.registerApplier("HABIT", async (env) => {
-    if (env.isDeleted) {
-      await habitStorage.delete(env.entityId);
-    } else if (env.payload) {
-      const existing = await habitStorage.getById(env.entityId);
-      if (existing) {
-        await habitStorage.update(env.entityId, () => env.payload as Habit);
-      } else {
-        await habitStorage.insert(env.payload as Habit);
-      }
-    }
-  });
-
-  coordinator.registerApplier("HABIT_ENTRY", async (env) => {
-    if (env.isDeleted) {
-      await entryStorage.delete(env.entityId);
-    } else if (env.payload) {
-      const existing = await entryStorage.getById(env.entityId);
-      if (existing) {
-        await entryStorage.update(env.entityId, () => env.payload as HabitEntry);
-      } else {
-        await entryStorage.insert(env.payload as HabitEntry);
-      }
-    }
-  });
-
-  coordinator.registerApplier("STREAK_SHIELD", async (env) => {
-    if (env.isDeleted) {
-      await shieldStorage.delete(env.entityId);
-    } else if (env.payload) {
-      const existing = await shieldStorage.getById(env.entityId);
-      if (existing) {
-        await shieldStorage.update(env.entityId, () => env.payload as StreakShield);
-      } else {
-        await shieldStorage.insert(env.payload as StreakShield);
-      }
-    }
-  });
-
-  coordinator.registerApplier("INSIGHT", async (env) => {
-    if (env.isDeleted) {
-      await insightStorage.delete(env.entityId);
-    } else if (env.payload) {
-      const existing = await insightStorage.getById(env.entityId);
-      if (existing) {
-        await insightStorage.update(env.entityId, () => env.payload as StoredInsight);
-      } else {
-        await insightStorage.insert(env.payload as StoredInsight);
-      }
-    }
-  });
+  const tombstoneStore = new LocalTombstoneStore(profileId);
+  bindStorageToSync({ entityType: "HABIT", storage: habitStorage, coordinator, tombstoneStore });
+  bindStorageToSync({ entityType: "HABIT_ENTRY", storage: entryStorage, coordinator, tombstoneStore });
+  bindStorageToSync({ entityType: "STREAK_SHIELD", storage: shieldStorage, coordinator, tombstoneStore });
+  bindStorageToSync({ entityType: "INSIGHT", storage: insightStorage, coordinator, tombstoneStore });
 }
 
 export function AppContextProvider({ children }: { readonly children: ReactNode }) {
@@ -204,7 +161,7 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
     const entryStorage = new BrowserLocalStoragePort<HabitEntry>("entries", p.id);
     const shieldStorage = new BrowserLocalStoragePort<StreakShield>("shields", p.id);
     const insightStorage = new BrowserLocalStoragePort<StoredInsight>("insights", p.id);
-    setupCoordinatorAppliers(coordinator, habitStorage, entryStorage, shieldStorage, insightStorage);
+    setupCoordinatorAppliers(coordinator, p.id, habitStorage, entryStorage, shieldStorage, insightStorage);
     return coordinator;
   });
 
@@ -236,7 +193,7 @@ export function AppContextProvider({ children }: { readonly children: ReactNode 
       ? new HttpRemoteSyncAdapter({ endpointUrl: "/api/sync", authToken: switched.token })
       : new BroadcastChannelSyncAdapter();
     const newSync = new SyncCoordinator(deviceId, clock, adapter, eventBus);
-    setupCoordinatorAppliers(newSync, habitStorage, entryStorage, shieldStorage, insightStorage);
+    setupCoordinatorAppliers(newSync, switched.id, habitStorage, entryStorage, shieldStorage, insightStorage);
     setSyncCoordinator(newSync);
     setSyncStats(newSync.getStats());
 

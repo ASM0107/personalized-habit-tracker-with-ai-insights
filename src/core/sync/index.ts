@@ -1,3 +1,5 @@
+import { isIncomingWinner } from "./comparator.js";
+
 export interface SyncEnvelope<TPayload> {
   readonly operationId?: string;
   readonly entityId: string;
@@ -43,24 +45,14 @@ export class LastWriteWinsSynchronizer<T> {
     localEnvelope: SyncEnvelope<T>,
     incomingEnvelope: SyncEnvelope<T>
   ): SyncEnvelope<T> {
-    if (incomingEnvelope.lamportTimestamp > localEnvelope.lamportTimestamp) {
-      return incomingEnvelope;
-    }
-    if (incomingEnvelope.lamportTimestamp < localEnvelope.lamportTimestamp) {
-      return localEnvelope;
-    }
-    if (incomingEnvelope.deviceId !== localEnvelope.deviceId) {
-      return incomingEnvelope.deviceId > localEnvelope.deviceId
-        ? incomingEnvelope
-        : localEnvelope;
-    }
-    const incomingOp = incomingEnvelope.operationId || "";
-    const localOp = localEnvelope.operationId || "";
-    return incomingOp >= localOp ? incomingEnvelope : localEnvelope;
+    return isIncomingWinner(localEnvelope, incomingEnvelope)
+      ? incomingEnvelope
+      : localEnvelope;
   }
 }
 
+export * from "./comparator.js";
+export * from "./tombstones.js";
 export * from "./remote-sync.js";
 export * from "./coordinator.js";
 export * from "./store-bridge.js";
-

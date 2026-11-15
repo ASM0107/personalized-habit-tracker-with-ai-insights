@@ -74,3 +74,5 @@ export function verifyToken(rawToken: string): TokenPayload | null;
 export function handleSyncPush(userId: string, envelopes: unknown[]): PushResult;
 export function handleSyncPull(userId: string, sinceCursor?: number, limit?: number): PullResult;
 export function handleSyncGetMaterialized(userId: string): MaterializedResult;
+export function getStorageFile(): string;
+export function setStorageFileForTesting(newPath: string): void;

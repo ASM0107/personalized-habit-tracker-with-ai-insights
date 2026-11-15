@@ -1,6 +1,6 @@
 # Comprehensive Testing & Verification Report
 ## Project: 001 - Personalized Habit Tracker with AI Insights
-**Status**: Passed All Automated Tests (18/18 Test Suites, 91/91 Tests)  
+**Status**: Passed All Automated Tests (18/18 Test Suites, 98/98 Tests)  
 **Verification Level**: Unit, Integration, Alpha Cohort, Frontend, Remote Sync, PWA, Multi-User, Security & Distributed Simulation  
 **Architecture**: Dune Framework for Agents (Vertical Slicing, Strict Import Bans, Zero Comments)
 
@@ -16,7 +16,7 @@ This report documents the verification and operational assessment of the **Perso
 5. **Remote Cloud Sync & AI Gateway**: Verification of HttpRemoteSyncAdapter, multi-tab BroadcastChannelSyncAdapter, persistent offline outbound queue, and server-side Gemini API key isolation with x-goog-api-key headers.
 6. **E2E & Production Verification**: Verification of PWA manifest and service worker precaching, network-only API routing, offline application launch, simultaneous conflicting mutations (LWW + device ID tie-break), and automatic AI retry with exponential backoff.
 7. **Security & Identity Hardening**: Verification of scrypt password hashing with explicit cost parameters, HMAC-SHA256 bearer token integrity, 7-day token expiration, future-timestamp rejection, brute-force rate limiting, and partitioned local profile lifecycle.
-8. **Distributed Synchronization Correctness & Convergence**: Verification of globally unique operation identifiers, server-side deduplication against at-least-once duplicate delivery, dual-state materialized entity tracking, deletion tombstones, live application-store integration (`bindStorageToSync`), and a concurrent 3-device mesh convergence simulation.
+8. **Distributed Synchronization Correctness & Convergence (Project 001.3)**: Verification of canonical conflict comparator, durable client tombstones (`LocalTombstoneStore`), failure-safe inbound cursor progression, empty page loop protection, observable cursor persistence, server filesystem failure safety, and property-based mathematical permutation convergence across multi-device configurations.
 
 ---
 
@@ -41,8 +41,8 @@ This report documents the verification and operational assessment of the **Perso
 | **AI Gateway Security** | [`src/tests/ai_gateway_security.test.ts`](src/tests/ai_gateway_security.test.ts) | 9 | ~15 ms | **PASS** |
 | **Local Profile Lifecycle** | [`src/tests/local_profile_lifecycle.test.ts`](src/tests/local_profile_lifecycle.test.ts) | 6 | ~15 ms | **PASS** |
 | **Cloud Auth Security** | [`src/tests/cloud_auth_security.test.ts`](src/tests/cloud_auth_security.test.ts) | 10 | ~340 ms | **PASS** |
-| **Distributed Sync Correctness** | [`src/tests/distributed_sync_simulation.test.ts`](src/tests/distributed_sync_simulation.test.ts) | 5 | ~1430 ms | **PASS** |
-| **Total** | **18 Test Files** | **91 Tests** | **~2.88 s** | **100% PASS** |
+| **Distributed Sync Correctness** | [`src/tests/distributed_sync_simulation.test.ts`](src/tests/distributed_sync_simulation.test.ts) | 12 | ~2000 ms | **PASS** |
+| **Total** | **18 Test Files** | **98 Tests** | **~2.85 s** | **100% PASS** |
 
 ---
 
@@ -81,12 +81,18 @@ This report documents the verification and operational assessment of the **Perso
 * **Inbound Sync Application**: Verified that incoming sync envelopes from remote pulls are dispatched directly into local stores and update the UI reactively.
 * **Server LWW Tie-Break**: Verified deterministic conflict resolution ordering by Lamport timestamp, breaking ties using lexicographical device ID comparison.
 
-### 3.6 Distributed Synchronization Correctness & Multi-Device Convergence (Project 001.2)
+### 3.6 Distributed Synchronization Correctness, Convergence & Protocol Durability (Project 001.3)
+* **Canonical Conflict Comparator**: Enforced identical conflict comparison across `isIncomingWinner`, `LastWriteWinsSynchronizer`, and server-side `handleSyncPush`. Validated deterministic ordering across Lamport timestamp, `deviceId`, and `operationId`.
+* **Durable Client Tombstones (`LocalTombstoneStore`)**: Validated that deletion tombstones survive full client restarts and page reloads. Demonstrated that delayed stale peer mutations are safely dropped and cannot resurrect deleted records.
+* **Failure-Safe Cursor Progression**: Validated that when inbound entity appliers encounter failures (e.g. disk or constraint errors), `SyncCoordinator` halts immediately, retains the cursor at the last successfully committed sequence, raises an observable error, and cleanly applies remaining records upon retry without skipping unapplied changes.
+* **Empty Page Loop Guard**: Validated that empty pull responses (`changes: []`) with `hasMore: true` advance the cursor and terminate without infinite polling loops.
+* **Observable Cursor Persistence**: Validated that local cursor persistence errors (such as `QuotaExceededError`) propagate as observable exceptions and transition coordinator state to `ERROR`.
 * **Idempotent Mutations & Server-Side Deduplication**: Every mutation carries a globally unique `operationId`. Validated that at-least-once network retries with duplicate envelopes return `newlyCommittedCount: 0`, advance zero cursors, and avoid duplicating change logs.
 * **Materialized Entity State vs. Change Log**: Validated that the server maintains both the append-only change log and a deterministic materialized state (`materializedState[userId]`). Stale mutations arriving out-of-order are logged for auditability but never regress winning entity values.
-* **Deletion Tombstones**: Validated that deletion tombstones (`isDeleted: true`, `tombstone: true`) prevent stale concurrent edits from resurrecting deleted records. Only operations with strictly higher Lamport timestamps can recreate entities.
-* **Live Store Integration (`bindStorageToSync`)**: Wrote permanent bridge wiring `SyncCoordinator` to `BrowserLocalStoragePort` and `HabitStore`. Validated that habits created on Device 1 propagate directly into Device 2's storage and domain store, and that deletion tombstones correctly purge local records.
-* **3-Device Mesh Convergence**: Simulated 3 concurrent devices (Phone, Laptop, Tablet) with out-of-order arrivals, conflicting updates, and independent local mutations. Validated mathematical convergence: all 3 devices and the server reached the identical state (`Hydrate Optimum`, 3 total records).
+* **Live Store Integration (`bindStorageToSync`)**: Wrote permanent bridge wiring `SyncCoordinator` to `BrowserLocalStoragePort`, `LocalTombstoneStore`, and domain stores. Validated that habits created on Device 1 propagate directly into Device 2's storage and domain store, and that deletion tombstones correctly purge local records.
+* **Property-Based Permutation Convergence**: Verified that across arbitrary operation delivery permutations, concurrent edits, deletes, recreations, and duplicate arrivals, all nodes converge to the exact same materialized state:
+  $$\forall \pi \in \operatorname{Permutations}(O), \quad \operatorname{Converge}(\pi(O)) = S^*$$
+* **Server Persistence Durability**: Validated that if filesystem writes fail during sync commit or account registration, the server returns HTTP 500 error and refuses to acknowledge uncommitted state.
 
 ---
 

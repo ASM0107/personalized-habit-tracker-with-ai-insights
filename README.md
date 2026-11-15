@@ -72,12 +72,16 @@ Designed to serve both privacy-focused guest users and users testing multi-devic
   - **Stateless Authentication vs. Persistence Decoupling:** Stateless HMAC-SHA256 bearer tokens eliminate the need for server-side session affinity (any serverless instance with `AUTH_SECRET` can verify the token). However, stateless tokens do **not** eliminate the need for shared persistent storage; serverless instances do not share local filesystem state, making a durable database necessary for reliable synchronisation across multiple instances.
 
 ### 6. Cloud & Peer Synchronisation Engine
+- **Canonical Conflict Comparator (Project 001.3):** Eliminates comparator discrepancy by sharing a single deterministic comparator contract (`isIncomingWinner` in `src/core/sync/comparator.ts`) between client and server. Ties are broken in order: Lamport timestamp $\to$ `deviceId` $\to$ `operationId`.
+- **Durable Client Tombstones & Anti-Resurrection (`LocalTombstoneStore`):** Client-side deletion tombstones are durably persisted in partitioned local storage (`habit_tracker_${partitionKey}_tombstones`). They survive client reboots and browser page reloads, guaranteeing that delayed or out-of-order peer edits can never resurrect a deleted entity as a zombie.
+- **Failure-Safe Inbound Cursor Progression:** Inbound sync application halts immediately if any entity applier fails. The client cursor advances only up to the last successfully applied sequence, ensuring that unapplied operations are never skipped on subsequent sync pulls.
+- **Empty Page Infinite Loop Guard:** Protects the coordinator pull loop against server anomalies by terminating gracefully when a page returns zero changes even if `hasMore` is flagged.
+- **Observable Queue & Cursor Persistence:** Storage write failures in `SyncCoordinator` (for both outbound mutation queues and inbound server cursors) trigger immediate rollbacks and raise observable errors rather than silently swallowing exceptions.
 - **Dual-State Model (Log & Materialized View):** The synchronization backend maintains both an append-only change log (`changeLogs[userId]`) with monotonic sequence numbers (`serverCursor`) and a deterministic materialized entity state (`materializedState[userId]`), ensuring incremental pull streaming without stale entity regression.
 - **Idempotent Mutations & Server-Side Deduplication:** Every mutation carries a globally unique `operationId`. The server validates incoming operations against `processedOperations[userId]`, guaranteeing that at-least-once network retries never produce duplicate entries or phantom cursor increments.
-- **Deletion Tombstones:** Deletions are explicitly propagated as deletion tombstones (`isDeleted: true`, `tombstone: true`), guaranteeing that out-of-order or stale concurrent edits can never resurrect deleted entities.
-- **Application Store Integration (`bindStorageToSync`):** Directly wires the `SyncCoordinator` to live `StoragePort` partitions, ensuring that remote sync changes update domain stores reactively while respecting Lamport causality.
-- **Observable Queue Persistence (AUD-013):** Client mutation queues in `SyncCoordinator` guarantee atomicity: if browser storage writes fail, in-memory state is rolled back and an observable error is raised.
-- **Conflict-Free Resolution:** Uses **Lamport logical clocks** and **Last-Write-Wins (LWW)** deterministic conflict resolution (breaking ties by `deviceId` and `operationId`).
+- **Application Store Integration (`bindStorageToSync`):** Directly wires the `SyncCoordinator` to live `StoragePort` partitions and `LocalTombstoneStore`, ensuring that remote sync changes update domain stores reactively while respecting Lamport causality and deletion tombstones.
+- **Property-Based Convergence Proof:** Verified across arbitrary operation delivery permutations that all nodes deterministically converge to the exact same materialized state:
+  $$\forall \pi \in \operatorname{Permutations}(O), \quad \operatorname{Converge}(\pi(O)) = S^*$$
 
 ### 7. Progressive Web App (PWA) Offline Experience
 - **Precached Assets:** Workbox service worker precaches all core application assets (`dist/`), ensuring instant startup.
@@ -117,7 +121,7 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── database/                   # StoragePort & partitioned BrowserLocalStoragePort
 │   │   ├── event-bus/                  # Domain event broker (InMemoryEventBus)
 │   │   ├── navigation/                 # Navigation router (StackNavigationRouter)
-│   │   ├── sync/                       # LamportClock, LastWriteWins, HttpRemoteSyncAdapter
+│   │   ├── sync/                       # LamportClock, LastWriteWins, comparator, tombstones, coordinator
 │   │   └── ui/                         # AppContext, shared components & settings
 │   │
 │   ├── features/                       # Vertically Sliced Domain Features
@@ -127,7 +131,7 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── insights/                   # Heuristic detection, AI coaching & schema contracts
 │   │   └── streaks/                    # EMA momentum scoring, streak shields
 │   │
-│   └── tests/                          # Automated Verification Suite (18 files, 91 tests)
+│   └── tests/                          # Automated Verification Suite (18 files, 98 tests)
 │       ├── ai_gateway_security.test.ts # AI gateway payload constraints, rate limiting & header isolation
 │       ├── alpha_simulation.test.ts     # 30-day multi-persona cohort simulation
 │       ├── analytics.test.ts           # Correlation matrices & heatmap logic
@@ -165,7 +169,7 @@ personalized-habit-tracker-with-ai-insights/
 | **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
 | **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
 | **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
-| **Test Suite** | Vitest 3.0 | 91 automated tests across 18 test files | Production-Ready |
+| **Test Suite** | Vitest 3.0 | 98 automated tests across 18 test files | Production-Ready |
 
 ---
 
@@ -298,7 +302,7 @@ npm run build:app   # Generates production bundle with PWA service worker (dist/
 
 ### Automated Test Suite
 ```bash
-# Runs 91 unit, integration, sync, multi-user, and benchmark tests across 18 test files
+# Runs 98 unit, integration, sync, multi-user, and benchmark tests across 18 test files
 npm test
 
 # Enforces Dune architectural invariants (0 comments, strict vertical feature boundaries)

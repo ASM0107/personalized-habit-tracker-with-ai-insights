@@ -235,11 +235,11 @@ CREATE TABLE user_clocks (
 ```
 Test Execution Summary:
 ----------------------------------------------------------------------
-Total Test Files   : 17 files
-Total Tests        : 77 tests
-Passing Tests      : 77 (100%)
+Total Test Files   : 18 files
+Total Tests        : 98 tests
+Passing Tests      : 98 (100%)
 Failing Tests      : 0
-Duration           : 1.42s
+Duration           : 2.85s
 Dune Compliance    : 100% (0 comments, strict vertical feature boundaries)
 Architectural Tests: PASS (src/tests/architecture.test.ts)
 ```
@@ -251,6 +251,7 @@ Architectural Tests: PASS (src/tests/architecture.test.ts)
 - `src/tests/architecture.test.ts`: Dune architectural boundary enforcement and comment bans.
 - `src/tests/cloud_auth_security.test.ts`: Token signature tampering, 7-day expiration, brute-force protection.
 - `src/tests/core.test.ts`: EventBus, navigation, and storage port tests.
+- `src/tests/distributed_sync_simulation.test.ts`: Canonical comparator, durable client tombstones, failure-safe cursor progression, empty page loop protection, observable cursor persistence, and property-based permutation convergence.
 - `src/tests/e2e_verification.test.ts`: PWA, offline sync, and AI fallback E2E flows.
 - `src/tests/frontend.test.ts`: View rendering and interactive state.
 - `src/tests/habits.test.ts`: Habit scheduling and entry mutations.

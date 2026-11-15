@@ -3,9 +3,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const STORAGE_FILE =
+let STORAGE_FILE =
   process.env.HABIT_TRACKER_STORAGE_FILE ||
   path.join(os.tmpdir(), "habit_tracker_cloud_storage.json");
+
+export function getStorageFile() {
+  return STORAGE_FILE;
+}
+
+export function setStorageFileForTesting(newPath) {
+  STORAGE_FILE = newPath;
+}
 const AUTH_SECRET =
   process.env.AUTH_SECRET ||
   (process.env.NODE_ENV === "production"
@@ -55,42 +63,43 @@ function loadState() {
 }
 
 function saveState() {
-  try {
-    let existingOnDisk = {
-      users: {},
-      changeLogs: {},
-      serverCursors: {},
-      materializedState: {},
-      processedOperations: {},
-    };
-    if (fs.existsSync(STORAGE_FILE)) {
-      try {
-        const raw = fs.readFileSync(STORAGE_FILE, "utf-8");
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed === "object") {
-          existingOnDisk = parsed;
-        }
-      } catch {
-        existingOnDisk = {
-          users: {},
-          changeLogs: {},
-          serverCursors: {},
-          materializedState: {},
-          processedOperations: {},
-        };
+  let existingOnDisk = {
+    users: {},
+    changeLogs: {},
+    serverCursors: {},
+    materializedState: {},
+    processedOperations: {},
+  };
+  if (fs.existsSync(STORAGE_FILE)) {
+    try {
+      const raw = fs.readFileSync(STORAGE_FILE, "utf-8");
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === "object") {
+        existingOnDisk = parsed;
       }
+    } catch {
+      existingOnDisk = {
+        users: {},
+        changeLogs: {},
+        serverCursors: {},
+        materializedState: {},
+        processedOperations: {},
+      };
     }
-    const merged = {
-      users: { ...(existingOnDisk.users || {}), ...dbState.users },
-      changeLogs: { ...(existingOnDisk.changeLogs || {}), ...dbState.changeLogs },
-      serverCursors: { ...(existingOnDisk.serverCursors || {}), ...dbState.serverCursors },
-      materializedState: { ...(existingOnDisk.materializedState || {}), ...dbState.materializedState },
-      processedOperations: { ...(existingOnDisk.processedOperations || {}), ...dbState.processedOperations },
-    };
-    dbState = merged;
+  }
+  const merged = {
+    users: { ...(existingOnDisk.users || {}), ...dbState.users },
+    changeLogs: { ...(existingOnDisk.changeLogs || {}), ...dbState.changeLogs },
+    serverCursors: { ...(existingOnDisk.serverCursors || {}), ...dbState.serverCursors },
+    materializedState: { ...(existingOnDisk.materializedState || {}), ...dbState.materializedState },
+    processedOperations: { ...(existingOnDisk.processedOperations || {}), ...dbState.processedOperations },
+  };
+  dbState = merged;
+  try {
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(merged), "utf-8");
-  } catch {
-    return;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "unknown disk failure";
+    throw new Error(`Failed to persist server state to disk: ${message}`);
   }
 }
 
@@ -197,7 +206,14 @@ export async function handleRegister(payload, clientIp = "local") {
   dbState.users[id] = user;
   dbState.changeLogs[id] = [];
   dbState.serverCursors[id] = 0;
-  saveState();
+  try {
+    saveState();
+  } catch (err) {
+    return {
+      status: 500,
+      body: { error: err instanceof Error ? err.message : "Failed to persist registration" },
+    };
+  }
 
   const token = signToken(user);
   return {
@@ -357,7 +373,14 @@ export function handleSyncPush(userId, envelopes) {
   }
 
   dbState.serverCursors[userId] = cursor;
-  saveState();
+  try {
+    saveState();
+  } catch (err) {
+    return {
+      status: 500,
+      body: { error: err instanceof Error ? err.message : "Failed to persist sync push" },
+    };
+  }
 
   return {
     status: 200,

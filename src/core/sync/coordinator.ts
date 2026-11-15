@@ -118,8 +118,9 @@ export class SyncCoordinator {
     }
     try {
       window.localStorage.setItem(this.cursorStorageKey, String(this.lastSyncedCursor));
-    } catch {
-      return;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "unknown storage error";
+      throw new Error(`Storage write failed: unable to persist sync cursor: ${message}`);
     }
   }
 
@@ -204,8 +205,9 @@ export class SyncCoordinator {
           const removed = this.pendingOutbound.splice(0, pushResult.committedCount);
           try {
             this.persistQueue();
-          } catch {
+          } catch (err) {
             this.pendingOutbound.unshift(...removed);
+            throw err;
           }
           this.lastSyncedLamport = Math.max(
             this.lastSyncedLamport,
@@ -223,18 +225,37 @@ export class SyncCoordinator {
         while (hasMore) {
           const pullResult = await this.remoteSync.pullChanges(this.lastSyncedCursor, 100);
           if (pullResult.changes.length > 0) {
-            await this.handleIncomingEnvelopes(pullResult.changes);
+            for (const change of pullResult.changes) {
+              await this.applyIncomingEnvelope(change);
+              const changeCursor =
+                (change as { sequence?: number; serverCursor?: number }).sequence ??
+                (change as { sequence?: number; serverCursor?: number }).serverCursor;
+              if (typeof changeCursor === "number") {
+                this.lastSyncedCursor = changeCursor;
+                this.persistCursor();
+              }
+            }
+          }
+          if (pullResult.nextCursor > this.lastSyncedCursor) {
             this.lastSyncedCursor = pullResult.nextCursor;
             this.persistCursor();
           }
-          hasMore = pullResult.hasMore;
+          if (!pullResult.hasMore || pullResult.changes.length === 0) {
+            hasMore = false;
+          }
         }
       } else {
         const incoming = await this.remoteSync.pullEnvelopes(this.lastSyncedCursor);
-        if (incoming.length > 0) {
-          await this.handleIncomingEnvelopes(incoming);
-          this.lastSyncedCursor = Math.max(...incoming.map((e) => e.lamportTimestamp), this.lastSyncedCursor);
-          this.persistCursor();
+        for (const env of incoming) {
+          await this.applyIncomingEnvelope(env);
+          const envCursor =
+            (env as { sequence?: number; serverCursor?: number }).sequence ??
+            (env as { sequence?: number; serverCursor?: number }).serverCursor ??
+            env.lamportTimestamp;
+          if (typeof envCursor === "number" && envCursor > this.lastSyncedCursor) {
+            this.lastSyncedCursor = envCursor;
+            this.persistCursor();
+          }
         }
       }
 
@@ -248,40 +269,41 @@ export class SyncCoordinator {
     }
   }
 
+  public async applyIncomingEnvelope(env: SyncEnvelope<unknown>): Promise<void> {
+    if (env.operationId && this.processedOperationIds.has(env.operationId)) {
+      return;
+    }
+
+    this.clock.observe(env.lamportTimestamp);
+    this.lastSyncedLamport = Math.max(this.lastSyncedLamport, env.lamportTimestamp);
+
+    const applier = this.entityAppliers.get(env.entityType);
+    if (applier) {
+      await applier(env);
+    }
+
+    if (env.operationId) {
+      this.processedOperationIds.add(env.operationId);
+    }
+
+    if (this.eventBus) {
+      this.eventBus.publish({
+        id: `sync-rx-${env.entityId}-${Date.now()}`,
+        type: "SYNC_APPLIED",
+        timestamp: Date.now(),
+        payload: {
+          entityId: env.entityId,
+          entityType: env.entityType,
+          isDeleted: env.isDeleted,
+          operationId: env.operationId,
+        },
+      });
+    }
+  }
+
   private async handleIncomingEnvelopes(envelopes: readonly SyncEnvelope<unknown>[]): Promise<void> {
     for (const env of envelopes) {
-      if (env.operationId && this.processedOperationIds.has(env.operationId)) {
-        continue;
-      }
-      if (env.operationId) {
-        this.processedOperationIds.add(env.operationId);
-      }
-
-      this.clock.observe(env.lamportTimestamp);
-      this.lastSyncedLamport = Math.max(this.lastSyncedLamport, env.lamportTimestamp);
-
-      const applier = this.entityAppliers.get(env.entityType);
-      if (applier) {
-        try {
-          await applier(env);
-        } catch {
-          continue;
-        }
-      }
-
-      if (this.eventBus) {
-        this.eventBus.publish({
-          id: `sync-rx-${env.entityId}-${Date.now()}`,
-          type: "SYNC_APPLIED",
-          timestamp: Date.now(),
-          payload: {
-            entityId: env.entityId,
-            entityType: env.entityType,
-            isDeleted: env.isDeleted,
-            operationId: env.operationId,
-          },
-        });
-      }
+      await this.applyIncomingEnvelope(env);
     }
   }
 
