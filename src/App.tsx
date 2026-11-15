@@ -213,6 +213,15 @@ export function App() {
   };
 
   const handleSeedSampleData = async () => {
+    const existingHabits = await habitStore.getAllActiveHabits();
+    for (const h of existingHabits) {
+      await habitStore.deleteHabit(h.id);
+    }
+    if (typeof window !== "undefined" && window.localStorage) {
+      window.localStorage.removeItem("habit_tracker_insights");
+      window.localStorage.removeItem("habit_tracker_shields");
+    }
+
     const today = new Date();
     const formatDate = (offsetDays: number) => {
       const d = new Date(today);
@@ -223,29 +232,48 @@ export function App() {
       return `${y}-${m}-${dt}`;
     };
 
-    const h1 = await habitStore.createHabit({
-      id: "sample-meditation",
-      title: "Morning Meditation",
-      category: "Mindfulness",
+    const sleepHabit = await habitStore.createHabit({
+      id: "codep-sleep",
+      title: "Early Sleep (10:30 PM)",
+      category: "Rest & Recovery",
+      targetType: "CHECK",
+      targetValue: 1,
+      schedule: HabitScheduler.createDailySchedule(formatDate(14)),
+    });
+
+    const workoutHabit = await habitStore.createHabit({
+      id: "codep-workout",
+      title: "Morning Workout",
+      category: "Fitness",
       targetType: "DURATION",
-      targetValue: 20,
+      targetValue: 30,
       unit: "mins",
       schedule: HabitScheduler.createDailySchedule(formatDate(14)),
     });
 
-    const h2 = await habitStore.createHabit({
-      id: "sample-hydration",
-      title: "Daily Hydration",
+    const breakfastHabit = await habitStore.createHabit({
+      id: "codep-nutrition",
+      title: "Protein Breakfast",
       category: "Health",
       targetType: "NUMERIC",
-      targetValue: 8,
-      unit: "glasses",
+      targetValue: 1,
+      unit: "meal",
       schedule: HabitScheduler.createDailySchedule(formatDate(14)),
     });
 
-    const h3 = await habitStore.createHabit({
-      id: "sample-reading",
-      title: "Evening Reading",
+    const overtimeHabit = await habitStore.createHabit({
+      id: "codep-overtime",
+      title: "Late-Night Screen Overtime",
+      category: "Work",
+      targetType: "DURATION",
+      targetValue: 60,
+      unit: "mins",
+      schedule: HabitScheduler.createDailySchedule(formatDate(14)),
+    });
+
+    const readingHabit = await habitStore.createHabit({
+      id: "codep-reading",
+      title: "Evening Wind-Down Reading",
       category: "Personal Growth",
       targetType: "DURATION",
       targetValue: 30,
@@ -255,13 +283,33 @@ export function App() {
 
     for (let dayOffset = 14; dayOffset >= 1; dayOffset -= 1) {
       const dateKey = formatDate(dayOffset);
-      await habitStore.recordCheckIn({ habitId: h1.id, dateKey, recordedValue: 20 });
-      await habitStore.recordCheckIn({ habitId: h2.id, dateKey, recordedValue: 8 });
+      const isOvertimeSpike = dayOffset === 8 || dayOffset === 7 || dayOffset <= 3;
+      const isWeekendParty = dayOffset === 6;
 
-      if (dayOffset <= 3) {
-        await habitStore.skipHabit(h3.id, dateKey, "Late work meetings");
+      if (isOvertimeSpike) {
+        await habitStore.recordCheckIn({ habitId: overtimeHabit.id, dateKey, recordedValue: 60 });
+        await habitStore.skipHabit(sleepHabit.id, dateKey, "Late overtime work disrupted sleep schedule");
+
+        if (dayOffset <= 3) {
+          await habitStore.skipHabit(readingHabit.id, dateKey, "Screen fatigue from late overtime");
+        } else {
+          await habitStore.recordCheckIn({ habitId: readingHabit.id, dateKey, recordedValue: 30 });
+        }
+
+        await habitStore.skipHabit(workoutHabit.id, dateKey, "Morning fatigue from disrupted sleep");
+        await habitStore.skipHabit(breakfastHabit.id, dateKey, "Rushed morning, skipped breakfast");
+      } else if (isWeekendParty) {
+        await habitStore.skipHabit(overtimeHabit.id, dateKey, "Weekend off");
+        await habitStore.skipHabit(sleepHabit.id, dateKey, "Late weekend social gathering");
+        await habitStore.skipHabit(readingHabit.id, dateKey, "Out late with friends");
+        await habitStore.skipHabit(workoutHabit.id, dateKey, "Slept in on Sunday");
+        await habitStore.recordCheckIn({ habitId: breakfastHabit.id, dateKey, recordedValue: 1 });
       } else {
-        await habitStore.recordCheckIn({ habitId: h3.id, dateKey, recordedValue: 30 });
+        await habitStore.skipHabit(overtimeHabit.id, dateKey, "No overtime, left work on time");
+        await habitStore.recordCheckIn({ habitId: sleepHabit.id, dateKey, recordedValue: 1 });
+        await habitStore.recordCheckIn({ habitId: readingHabit.id, dateKey, recordedValue: 30 });
+        await habitStore.recordCheckIn({ habitId: workoutHabit.id, dateKey, recordedValue: 30 });
+        await habitStore.recordCheckIn({ habitId: breakfastHabit.id, dateKey, recordedValue: 1 });
       }
     }
 
@@ -301,6 +349,15 @@ export function App() {
               className="ui-input date-input"
             />
           </div>
+
+          <button
+            type="button"
+            onClick={handleSeedSampleData}
+            className="btn btn-outline"
+            title="Load 14-day cohort with positive and negative codependencies"
+          >
+            ⚡ Load Codependent Cohort
+          </button>
 
           <button
             type="button"
@@ -366,7 +423,7 @@ export function App() {
                     onClick={handleSeedSampleData}
                     className="btn btn-outline"
                   >
-                    Load 14-Day Sample Demo Data
+                    Load 14-Day Codependent Cohort
                   </button>
                 </div>
               </div>

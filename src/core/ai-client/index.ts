@@ -33,21 +33,25 @@ export class GeminiInferenceClient implements AiInferencePort {
   private readonly maxRetries: number;
 
   public constructor(config: AiClientConfig = {}) {
-    const fromConfig = config.apiKey ?? "";
-    const fromStorage =
-      typeof window !== "undefined" && window.localStorage
-        ? window.localStorage.getItem(GeminiInferenceClient.STORAGE_KEY) ?? ""
-        : "";
-    const fromMeta =
-      typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_API_KEY
-        ? import.meta.env.VITE_GEMINI_API_KEY
-        : "";
-    const fromProcess =
-      typeof process !== "undefined" && process.env
-        ? process.env["GEMINI_API_KEY"] ?? ""
-        : "";
+    if (config.apiKey !== undefined) {
+      this.apiKey = config.apiKey;
+    } else {
+      const fromStorage =
+        typeof window !== "undefined" && window.localStorage
+          ? window.localStorage.getItem(GeminiInferenceClient.STORAGE_KEY) ?? ""
+          : "";
+      const fromMeta =
+        typeof import.meta !== "undefined" && import.meta.env?.VITE_GEMINI_API_KEY
+          ? import.meta.env.VITE_GEMINI_API_KEY
+          : "";
+      const fromProcess =
+        typeof process !== "undefined" && process.env
+          ? process.env["GEMINI_API_KEY"] ?? ""
+          : "";
 
-    this.apiKey = fromConfig || fromStorage || fromMeta || fromProcess;
+      this.apiKey = fromStorage || fromMeta || fromProcess;
+    }
+
     this.modelName = config.modelName ?? "gemini-2.0-flash";
     this.maxRetries = config.maxRetries ?? 3;
   }
