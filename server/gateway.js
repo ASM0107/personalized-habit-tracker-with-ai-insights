@@ -6,31 +6,40 @@ export async function handleAiInferenceRequest(payload, apiKey) {
     };
   }
 
-  const modelName = payload.modelName || "gemini-2.5-flash";
+  const modelName = payload?.modelName || "gemini-3.8-flash";
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), 35000);
 
   try {
     const upstreamUrl = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`;
+    const generationConfig = {
+      responseMimeType: "application/json",
+    };
+    if (payload?.responseSchemaJson) {
+      generationConfig.responseSchema = JSON.parse(payload.responseSchemaJson);
+    }
+
+    const requestBody = {
+      contents: [
+        {
+          parts: [{ text: payload?.prompt || "" }],
+        },
+      ],
+      generationConfig,
+    };
+
+    if (payload?.systemInstruction) {
+      requestBody.systemInstruction = {
+        parts: [{ text: payload.systemInstruction }],
+      };
+    }
+
     const upstreamResponse = await fetch(upstreamUrl, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({
-        systemInstruction: {
-          parts: [{ text: payload.systemInstruction }],
-        },
-        contents: [
-          {
-            parts: [{ text: payload.prompt }],
-          },
-        ],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: JSON.parse(payload.responseSchemaJson),
-        },
-      }),
+      body: JSON.stringify(requestBody),
       signal: controller.signal,
     });
 

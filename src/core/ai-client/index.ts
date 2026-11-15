@@ -52,7 +52,7 @@ export class GeminiInferenceClient implements AiInferencePort {
       this.apiKey = fromStorage || fromProcess;
     }
 
-    this.modelName = config.modelName ?? "gemini-2.5-flash";
+    this.modelName = config.modelName ?? "gemini-3.8-flash";
     this.maxRetries = config.maxRetries ?? 3;
     this.serverEndpoint = config.serverEndpoint ?? GeminiInferenceClient.DEFAULT_SERVER_ENDPOINT;
   }
