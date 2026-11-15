@@ -19,7 +19,9 @@ export default function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   const since = req.query["since"];
-  const sinceLamport = typeof since === "string" ? Number.parseInt(since, 10) : 0;
-  const result = handleSyncPull(user.id, sinceLamport);
+  const limit = req.query["limit"];
+  const sinceCursor = typeof since === "string" ? Number.parseInt(since, 10) : 0;
+  const pageLimit = typeof limit === "string" ? Number.parseInt(limit, 10) : 100;
+  const result = handleSyncPull(user.id, sinceCursor, pageLimit);
   res.status(result.status).json(result.body);
 }

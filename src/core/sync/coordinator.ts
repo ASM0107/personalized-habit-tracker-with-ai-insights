@@ -11,6 +11,7 @@ export interface SyncStats {
   readonly state: SyncState;
   readonly pendingOutboundCount: number;
   readonly lastSyncedLamport: number;
+  readonly lastSyncedCursor: number;
   readonly lastSyncTimestamp: number;
   readonly lastError?: string;
 }
@@ -24,7 +25,9 @@ export class SyncCoordinator {
   private readonly pendingOutbound: SyncEnvelope<unknown>[] = [];
   private readonly entityAppliers = new Map<string, InboundEntityApplier>();
   private readonly queueStorageKey: string;
+  private readonly cursorStorageKey: string;
   private lastSyncedLamport = 0;
+  private lastSyncedCursor = 0;
   private lastSyncTimestamp = 0;
   private state: SyncState = "IDLE";
   private lastError: string | null = null;
@@ -42,8 +45,10 @@ export class SyncCoordinator {
     this.synchronizer = new LastWriteWinsSynchronizer<unknown>();
     this.eventBus = eventBus ?? null;
     this.queueStorageKey = `habit_tracker_sync_pending_${deviceId}`;
+    this.cursorStorageKey = `habit_tracker_sync_cursor_${deviceId}`;
 
     this.hydrateQueue();
+    this.hydrateCursor();
 
     this.unsubscribeRemote = this.remoteSync.subscribeToRemote((envelopes) => {
       void this.handleIncomingEnvelopes(envelopes);
@@ -79,12 +84,36 @@ export class SyncCoordinator {
     if (typeof window === "undefined" || !window.localStorage) {
       return;
     }
+    if (this.pendingOutbound.length === 0) {
+      window.localStorage.removeItem(this.queueStorageKey);
+    } else {
+      window.localStorage.setItem(this.queueStorageKey, JSON.stringify(this.pendingOutbound));
+    }
+  }
+
+  private hydrateCursor(): void {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
     try {
-      if (this.pendingOutbound.length === 0) {
-        window.localStorage.removeItem(this.queueStorageKey);
-      } else {
-        window.localStorage.setItem(this.queueStorageKey, JSON.stringify(this.pendingOutbound));
+      const raw = window.localStorage.getItem(this.cursorStorageKey);
+      if (raw) {
+        const num = Number.parseInt(raw, 10);
+        if (!Number.isNaN(num)) {
+          this.lastSyncedCursor = num;
+        }
       }
+    } catch {
+      this.lastSyncedCursor = 0;
+    }
+  }
+
+  private persistCursor(): void {
+    if (typeof window === "undefined" || !window.localStorage) {
+      return;
+    }
+    try {
+      window.localStorage.setItem(this.cursorStorageKey, String(this.lastSyncedCursor));
     } catch {
       return;
     }
@@ -99,6 +128,7 @@ export class SyncCoordinator {
       state: this.state,
       pendingOutboundCount: this.pendingOutbound.length,
       lastSyncedLamport: this.lastSyncedLamport,
+      lastSyncedCursor: this.lastSyncedCursor,
       lastSyncTimestamp: this.lastSyncTimestamp,
       ...(this.lastError ? { lastError: this.lastError } : {}),
     };
@@ -121,7 +151,13 @@ export class SyncCoordinator {
     };
 
     this.pendingOutbound.push(envelope as SyncEnvelope<unknown>);
-    this.persistQueue();
+    try {
+      this.persistQueue();
+    } catch (err) {
+      this.pendingOutbound.pop();
+      const message = err instanceof Error ? err.message : "unknown storage error";
+      throw new Error(`Storage write failed: unable to persist sync queue for ${entityId}: ${message}`);
+    }
     return envelope;
   }
 
@@ -135,9 +171,16 @@ export class SyncCoordinator {
         const pushResult = await this.remoteSync.pushEnvelopes(batch);
 
         if (pushResult.success) {
-          this.pendingOutbound.splice(0, pushResult.committedCount);
-          this.persistQueue();
-          this.lastSyncedLamport = Math.max(this.lastSyncedLamport, pushResult.serverLamportTimestamp);
+          const removed = this.pendingOutbound.splice(0, pushResult.committedCount);
+          try {
+            this.persistQueue();
+          } catch {
+            this.pendingOutbound.unshift(...removed);
+          }
+          this.lastSyncedLamport = Math.max(
+            this.lastSyncedLamport,
+            pushResult.serverLamportTimestamp || pushResult.serverCursor || 0
+          );
         } else {
           this.state = pushResult.error?.includes("offline") ? "OFFLINE" : "ERROR";
           this.lastError = pushResult.error ?? "Failed to push sync batch";
@@ -145,9 +188,24 @@ export class SyncCoordinator {
         }
       }
 
-      const incoming = await this.remoteSync.pullEnvelopes(this.lastSyncedLamport);
-      if (incoming.length > 0) {
-        await this.handleIncomingEnvelopes(incoming);
+      if (this.remoteSync.pullChanges) {
+        let hasMore = true;
+        while (hasMore) {
+          const pullResult = await this.remoteSync.pullChanges(this.lastSyncedCursor, 100);
+          if (pullResult.changes.length > 0) {
+            await this.handleIncomingEnvelopes(pullResult.changes);
+            this.lastSyncedCursor = pullResult.nextCursor;
+            this.persistCursor();
+          }
+          hasMore = pullResult.hasMore;
+        }
+      } else {
+        const incoming = await this.remoteSync.pullEnvelopes(this.lastSyncedCursor);
+        if (incoming.length > 0) {
+          await this.handleIncomingEnvelopes(incoming);
+          this.lastSyncedCursor = Math.max(...incoming.map((e) => e.lamportTimestamp), this.lastSyncedCursor);
+          this.persistCursor();
+        }
       }
 
       this.state = "IDLE";

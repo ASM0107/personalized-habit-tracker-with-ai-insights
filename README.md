@@ -68,17 +68,19 @@ Designed to serve both privacy-focused guest users and users testing multi-devic
   - Supports profile creation, switching, renaming, and custom profile deletion without cloud registration or external dependencies.
 - **Cloud Accounts (Cross-Device Access — Preview):**
   - Optional account registration and authentication via email and password.
-  - Cryptographically secure: passwords hashed with `scrypt` using unique random 16-byte salts.
+  - Cryptographically hardened: asynchronous `crypto.scrypt` hashing with OWASP baseline parameters ($N = 131,072 = 2^{17}$, $r = 8$, $p = 1$, $\text{maxmem} = 256\text{MB}$) using random 16-byte cryptographic salts.
   - **Stateless Authentication vs. Persistence Decoupling:** Stateless HMAC-SHA256 bearer tokens eliminate the need for server-side session affinity (any serverless instance with `AUTH_SECRET` can verify the token). However, stateless tokens do **not** eliminate the need for shared persistent storage; serverless instances do not share local filesystem state, making a durable database necessary for reliable synchronisation across multiple instances.
 
 ### 6. Cloud & Peer Synchronisation Engine
-- **Sync Endpoints:** Backed by serverless endpoints (`POST /api/sync/push` and `GET /api/sync/pull`).
+- **Server Cursors & Append-Only Log (AUD-011):** The synchronization backend records mutations into an append-only change log with monotonic sequence numbers (`serverCursor`). Clients pull changes incrementally via cursor pagination (`since`, `limit`, `nextCursor`, `hasMore`).
+- **Observable Queue Persistence (AUD-013):** Client mutation queues in `SyncCoordinator` guarantee atomicity: if browser storage writes fail, in-memory state is rolled back and an observable error is raised.
 - **Conflict-Free Resolution:** Uses **Lamport logical clocks** and **Last-Write-Wins (LWW)** deterministic conflict resolution.
 - **Cross-Device Parity:** Habit updates committed on one device propagate to another when both sessions connect to a shared synchronisation backend.
 
 ### 7. Progressive Web App (PWA) Offline Experience
 - **Precached Assets:** Workbox service worker precaches all core application assets (`dist/`), ensuring instant startup.
-- **Offline Mutations:** Habit check-ins and edits are saved locally to IndexedDB/`localStorage` and queued for background synchronisation when connectivity resumes.
+- **Network-Only API Routing:** Explicitly isolates `/api/*` routes with `NetworkOnly` and `navigateFallbackDenylist`, completely preventing cross-tenant caching.
+- **Offline Mutations:** Habit check-ins and edits are saved locally to `localStorage` and queued for background synchronisation when connectivity resumes.
 - **Installable:** Installable as a standalone app on macOS, Windows, Linux, iOS, and Android without an app store.
 
 ---
@@ -123,7 +125,7 @@ personalized-habit-tracker-with-ai-insights/
 │   │   ├── insights/                   # Heuristic detection, AI coaching & schema contracts
 │   │   └── streaks/                    # EMA momentum scoring, streak shields
 │   │
-│   └── tests/                          # Automated Verification Suite (17 files, 83 tests)
+│   └── tests/                          # Automated Verification Suite (17 files, 86 tests)
 │       ├── ai_gateway_security.test.ts # AI gateway payload constraints, rate limiting & header isolation
 │       ├── alpha_simulation.test.ts     # 30-day multi-persona cohort simulation
 │       ├── analytics.test.ts           # Correlation matrices & heatmap logic
@@ -160,7 +162,7 @@ personalized-habit-tracker-with-ai-insights/
 | **AI Inference** | Google Gemini 3.5 Flash Lite | Sub-2-second structured behavioral coaching | Production-Ready |
 | **Authentication** | Cryptographic `scrypt` & HMAC-SHA256 | Salting, password hashing, and stateless bearer tokens | Implemented (Requires DB for prod) |
 | **Cloud Sync** | Lamport Clocks & Last-Write-Wins | Deterministic multi-device conflict resolution | Implemented (Requires DB for prod) |
-| **Test Suite** | Vitest 3.0 | 83 automated tests across 17 test files | Production-Ready |
+| **Test Suite** | Vitest 3.0 | 86 automated tests across 17 test files | Production-Ready |
 
 ---
 
@@ -199,8 +201,8 @@ The server gateway exposes RESTful endpoints for cloud multi-tenancy and data sy
 | `POST` | `/api/auth/register` | No | Creates a cloud account (`{ name, email, password }`), hashes password with `scrypt`, and returns a signed bearer token. |
 | `POST` | `/api/auth/login` | No | Validates credentials (`{ email, password }`) and returns a signed bearer token. |
 | `GET` | `/api/auth/me` | Yes (`Bearer <token>`) | Returns authenticated cloud user metadata. |
-| `POST` | `/api/sync/push` | Yes (`Bearer <token>`) | Commits a batch of sync envelopes and returns the latest server Lamport timestamp. |
-| `GET` | `/api/sync/pull?since=<ts>` | Yes (`Bearer <token>`) | Pulls all envelopes committed since the given Lamport timestamp for the authenticated user. |
+| `POST` | `/api/sync/push` | Yes (`Bearer <token>`) | Commits a batch of sync envelopes to the append-only log and returns the latest monotonic `serverCursor`. |
+| `GET` | `/api/sync/pull?since=<cursor>&limit=<limit>` | Yes (`Bearer <token>`) | Pulls paginated change records committed since the given server cursor (`changes`, `nextCursor`, `hasMore`). |
 | `GET` | `/api/ai/health` | No | Diagnostic endpoint verifying server gateway status and presence of `GEMINI_API_KEY`. |
 | `POST` | `/api/ai/infer` | No | Proxies structured prompt requests to Gemini with JSON schema validation. |
 
@@ -293,7 +295,7 @@ npm run build:app   # Generates production bundle with PWA service worker (dist/
 
 ### Automated Test Suite
 ```bash
-# Runs 83 unit, integration, sync, multi-user, and benchmark tests across 17 test files
+# Runs 86 unit, integration, sync, multi-user, and benchmark tests across 17 test files
 npm test
 
 # Enforces Dune architectural invariants (0 comments, strict vertical feature boundaries)

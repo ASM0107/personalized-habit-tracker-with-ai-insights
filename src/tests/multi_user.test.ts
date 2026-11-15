@@ -76,9 +76,9 @@ describe("Multi-User & Multi-Profile Architecture", () => {
     expect(store.getActiveProfile().id).toBe("default");
   });
 
-  it("verifies cryptographic cloud authentication and HMAC token lifecycle", () => {
+  it("verifies cryptographic cloud authentication and HMAC token lifecycle", async () => {
     const testEmail = `user_${Date.now()}@example.com`;
-    const regResult = handleRegister({
+    const regResult = await handleRegister({
       email: testEmail,
       password: "securePassword123",
       name: "Cloud User",
@@ -88,20 +88,20 @@ describe("Multi-User & Multi-Profile Architecture", () => {
     expect(regResult.body.user?.email).toBe(testEmail);
     expect(regResult.body.token?.length).toBeGreaterThan(20);
 
-    const duplicateReg = handleRegister({
+    const duplicateReg = await handleRegister({
       email: testEmail,
       password: "anotherPassword",
     });
     expect(duplicateReg.status).toBe(409);
 
-    const validLogin = handleLogin({
+    const validLogin = await handleLogin({
       email: testEmail,
       password: "securePassword123",
     });
     expect(validLogin.status).toBe(200);
     expect(validLogin.body.token?.length).toBeGreaterThan(20);
 
-    const invalidLogin = handleLogin({
+    const invalidLogin = await handleLogin({
       email: testEmail,
       password: "wrongPassword",
     });
@@ -115,12 +115,12 @@ describe("Multi-User & Multi-Profile Architecture", () => {
     expect(tampered).toBeNull();
   });
 
-  it("verifies multi-device cloud synchronization with Lamport timestamps and deterministic resolution", () => {
+  it("verifies multi-device cloud synchronization with Lamport timestamps and deterministic resolution", async () => {
     const userA = `userA_${Date.now()}@example.com`;
     const userB = `userB_${Date.now()}@example.com`;
 
-    const regA = handleRegister({ email: userA, password: "password123", name: "User A" });
-    const regB = handleRegister({ email: userB, password: "password123", name: "User B" });
+    const regA = await handleRegister({ email: userA, password: "password123", name: "User A" });
+    const regB = await handleRegister({ email: userB, password: "password123", name: "User B" });
 
     expect(regA.body.user?.email).toBe(userA.toLowerCase());
     expect(regB.body.user?.email).toBe(userB.toLowerCase());

@@ -1,6 +1,6 @@
 # Comprehensive Testing & Verification Report
 ## Project: 001 - Personalized Habit Tracker with AI Insights
-**Status**: Passed All Automated Tests (17/17 Test Suites, 83/83 Tests)  
+**Status**: Passed All Automated Tests (17/17 Test Suites, 86/86 Tests)  
 **Verification Level**: Unit, Integration, Alpha Cohort, Frontend, Remote Sync, PWA, Multi-User & Security  
 **Architecture**: Dune Framework for Agents (Vertical Slicing, Strict Import Bans, Zero Comments)
 
@@ -31,16 +31,16 @@ This report documents the verification and operational assessment of the **Perso
 | **Intelligence Engine** | [`src/tests/insights.test.ts`](src/tests/insights.test.ts) | 4 | ~5 ms | **PASS** |
 | **Analytics Engine** | [`src/tests/analytics.test.ts`](src/tests/analytics.test.ts) | 3 | ~16 ms | **PASS** |
 | **Frontend & Persistence** | [`src/tests/frontend.test.ts`](src/tests/frontend.test.ts) | 5 | ~17 ms | **PASS** |
-| **Remote Sync & PWA** | [`src/tests/sync_and_pwa.test.ts`](src/tests/sync_and_pwa.test.ts) | 8 | ~19 ms | **PASS** |
+| **Remote Sync & PWA** | [`src/tests/sync_and_pwa.test.ts`](src/tests/sync_and_pwa.test.ts) | 9 | ~19 ms | **PASS** |
 | **E2E Verification & Conflicts** | [`src/tests/e2e_verification.test.ts`](src/tests/e2e_verification.test.ts) | 6 | ~630 ms | **PASS** |
 | **Hardening & Performance SLOs** | [`src/tests/hardening_and_performance.test.ts`](src/tests/hardening_and_performance.test.ts) | 4 | ~18 ms | **PASS** |
 | **Integrated Workflows** | [`src/tests/integration_workflows.test.ts`](src/tests/integration_workflows.test.ts) | 1 | ~150 ms | **PASS** |
 | **Alpha Cohort Simulation** | [`src/tests/alpha_simulation.test.ts`](src/tests/alpha_simulation.test.ts) | 5 | ~420 ms | **PASS** |
 | **Multi-User Partitioning** | [`src/tests/multi_user.test.ts`](src/tests/multi_user.test.ts) | 4 | ~260 ms | **PASS** |
-| **AI Gateway Security** | [`src/tests/ai_gateway_security.test.ts`](src/tests/ai_gateway_security.test.ts) | 8 | ~15 ms | **PASS** |
+| **AI Gateway Security** | [`src/tests/ai_gateway_security.test.ts`](src/tests/ai_gateway_security.test.ts) | 9 | ~15 ms | **PASS** |
 | **Local Profile Lifecycle** | [`src/tests/local_profile_lifecycle.test.ts`](src/tests/local_profile_lifecycle.test.ts) | 6 | ~15 ms | **PASS** |
-| **Cloud Auth Security** | [`src/tests/cloud_auth_security.test.ts`](src/tests/cloud_auth_security.test.ts) | 9 | ~340 ms | **PASS** |
-| **Total** | **17 Test Files** | **83 Tests** | **~1.40 s** | **100% PASS** |
+| **Cloud Auth Security** | [`src/tests/cloud_auth_security.test.ts`](src/tests/cloud_auth_security.test.ts) | 10 | ~340 ms | **PASS** |
+| **Total** | **17 Test Files** | **86 Tests** | **~2.50 s** | **100% PASS** |
 
 ---
 
@@ -61,17 +61,20 @@ This report documents the verification and operational assessment of the **Perso
 
 ### 3.3 Security, AI Gateway & Token Verification
 * **Credential Isolation**: Verified zero occurrences of API keys in compiled frontend bundles. All production inference routes through serverless `/api/ai/infer` using `x-goog-api-key` headers; URL query parameters (`?key=`) are completely eliminated.
-* **Gateway Constraints**: Enforced payload limits (prompts $\le 20\text{KB}$, instructions $\le 5\text{KB}$, schemas $\le 10\text{KB}$) returning 413, whitelisted models (`gemini-3.5-flash-lite`), and 30-second abort timeouts.
+* **Gateway Hardening**: Enforced payload limits (prompts $\le 20\text{KB}$, instructions $\le 5\text{KB}$, schemas $\le 10\text{KB}$) returning 413, whitelisted models (`gemini-3.5-flash-lite`), full-stream 30-second abort timeouts covering body stream consumption, and strict candidate schema validation returning 502 Bad Gateway if requested required fields are absent.
+* **Asynchronous OWASP Scrypt**: Upgraded server-side password hashing from blocking calls to asynchronous `crypto.scrypt` with official OWASP baseline parameters ($N = 131,072 = 2^{17}$, $r = 8$, $p = 1$, $\text{maxmem} = 256\text{MB}$), guarding against Node.js event-loop starvation while ensuring brute-force resistance.
 * **Rate Limiting**: Verified sliding-window throttlers blocking abuse at 30 req/min for AI endpoints and 20 req/min for login endpoints.
 * **Token Lifecycle**: Verified 7-day token expiration lifecycle and rejection of future-dated timestamps ($> 60\text{s}$).
 
 ### 3.4 Local Partitioning & Storage Resilience
 * **Namespace Isolation**: Tested partitioned key schemas (`habit_tracker_${partitionKey}_${collection}`) preventing data leakage between guest and custom profiles.
 * **Write Failure Rollback**: Verified that when `localStorage.setItem` throws due to quota exhaustion or permission errors, `insert` and `update` roll back in-memory mutations and throw observable errors.
+* **Observable Queue Persistence (AUD-013)**: Verified that sync queue storage failures trigger immediate in-memory rollbacks and raise observable errors rather than silently swallowing write failures.
 * **Partition Cleanup**: Verified that deleting a custom profile cleans up all underlying storage keys (`habits`, `entries`, `shields`, `insights`), while the `default` profile is protected against deletion.
 
 ### 3.5 Remote Sync, Service Worker & Conflict Resolution
 * **Service Worker Isolation**: Verified that Workbox runtime caching exclusively precaches same-origin static assets and rejects `/api/*` routes with `NetworkOnly` and `navigateFallbackDenylist`.
+* **Server Cursors & Append-Only Log (AUD-011)**: Replaced naive server overwrites with monotonic server-issued sequence cursors (`serverCursor`, `nextCursor`) and an append-only change log. Verified incremental, paginated change retrieval without missed updates or out-of-order race conditions.
 * **Durable Offline Queue**: Verified that uncommitted outbound sync mutations are persisted in `localStorage` across page reloads and drained upon reconnection.
 * **Inbound Sync Application**: Verified that incoming sync envelopes from remote pulls are dispatched directly into local stores and update the UI reactively.
 * **Server LWW Tie-Break**: Verified deterministic conflict resolution ordering by Lamport timestamp, breaking ties using lexicographical device ID comparison.

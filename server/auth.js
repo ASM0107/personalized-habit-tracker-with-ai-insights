@@ -3,7 +3,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-const STORAGE_FILE = path.join(os.tmpdir(), "habit_tracker_cloud_storage.json");
+const STORAGE_FILE =
+  process.env.HABIT_TRACKER_STORAGE_FILE ||
+  path.join(os.tmpdir(), "habit_tracker_cloud_storage.json");
 const AUTH_SECRET =
   process.env.AUTH_SECRET ||
   (process.env.NODE_ENV === "production"
@@ -28,24 +30,47 @@ function checkAuthRateLimit(key, limit = 20, windowMs = 60000) {
 
 let dbState = {
   users: {},
-  userEnvelopes: {},
-  serverClocks: {},
+  changeLogs: {},
+  serverCursors: {},
 };
 
 function loadState() {
   try {
     if (fs.existsSync(STORAGE_FILE)) {
       const raw = fs.readFileSync(STORAGE_FILE, "utf-8");
-      dbState = JSON.parse(raw);
+      const diskState = JSON.parse(raw);
+      if (diskState && typeof diskState === "object") {
+        dbState.users = { ...(diskState.users || {}), ...dbState.users };
+        dbState.changeLogs = { ...(diskState.changeLogs || {}), ...dbState.changeLogs };
+        dbState.serverCursors = { ...(diskState.serverCursors || {}), ...dbState.serverCursors };
+      }
     }
   } catch {
-    dbState = { users: {}, userEnvelopes: {}, serverClocks: {} };
+    return;
   }
 }
 
 function saveState() {
   try {
-    fs.writeFileSync(STORAGE_FILE, JSON.stringify(dbState), "utf-8");
+    let existingOnDisk = { users: {}, changeLogs: {}, serverCursors: {} };
+    if (fs.existsSync(STORAGE_FILE)) {
+      try {
+        const raw = fs.readFileSync(STORAGE_FILE, "utf-8");
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object") {
+          existingOnDisk = parsed;
+        }
+      } catch {
+        existingOnDisk = { users: {}, changeLogs: {}, serverCursors: {} };
+      }
+    }
+    const merged = {
+      users: { ...(existingOnDisk.users || {}), ...dbState.users },
+      changeLogs: { ...(existingOnDisk.changeLogs || {}), ...dbState.changeLogs },
+      serverCursors: { ...(existingOnDisk.serverCursors || {}), ...dbState.serverCursors },
+    };
+    dbState = merged;
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(merged), "utf-8");
   } catch {
     return;
   }
@@ -53,8 +78,22 @@ function saveState() {
 
 loadState();
 
-function hashPassword(password, salt) {
-  return crypto.scryptSync(password, salt, 64, { N: 16384, r: 8, p: 1 }).toString("hex");
+function hashPasswordAsync(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(
+      password,
+      salt,
+      64,
+      { N: 131072, r: 8, p: 1, maxmem: 256 * 1024 * 1024 },
+      (err, derivedKey) => {
+        if (err) {
+          reject(err);
+        } else {
+          resolve(derivedKey.toString("hex"));
+        }
+      }
+    );
+  });
 }
 
 export function signToken(user, customTimestamp = Date.now()) {
@@ -100,7 +139,7 @@ export function verifyToken(rawToken) {
   }
 }
 
-export function handleRegister(payload, clientIp = "local") {
+export async function handleRegister(payload, clientIp = "local") {
   if (!checkAuthRateLimit(`reg_${clientIp}`, 15, 60000)) {
     return { status: 429, body: { error: "Too many registration attempts. Please wait." } };
   }
@@ -125,7 +164,7 @@ export function handleRegister(payload, clientIp = "local") {
   }
 
   const salt = crypto.randomBytes(16).toString("hex");
-  const passwordHash = hashPassword(password, salt);
+  const passwordHash = await hashPasswordAsync(password, salt);
   const id = `usr_${crypto.randomBytes(8).toString("hex")}`;
   const createdAt = Date.now();
   const user = {
@@ -138,8 +177,8 @@ export function handleRegister(payload, clientIp = "local") {
   };
 
   dbState.users[id] = user;
-  dbState.userEnvelopes[id] = [];
-  dbState.serverClocks[id] = 0;
+  dbState.changeLogs[id] = [];
+  dbState.serverCursors[id] = 0;
   saveState();
 
   const token = signToken(user);
@@ -158,7 +197,7 @@ export function handleRegister(payload, clientIp = "local") {
   };
 }
 
-export function handleLogin(payload, clientIp = "local") {
+export async function handleLogin(payload, clientIp = "local") {
   if (!checkAuthRateLimit(`login_${clientIp}`, 20, 60000)) {
     return { status: 429, body: { error: "Too many login attempts. Please wait." } };
   }
@@ -175,7 +214,7 @@ export function handleLogin(payload, clientIp = "local") {
     return { status: 401, body: { error: "Invalid email or password" } };
   }
 
-  const computedHash = hashPassword(password, user.salt);
+  const computedHash = await hashPasswordAsync(password, user.salt);
   if (!crypto.timingSafeEqual(Buffer.from(computedHash), Buffer.from(user.passwordHash))) {
     return { status: 401, body: { error: "Invalid email or password" } };
   }
@@ -217,46 +256,35 @@ export function handleSyncPush(userId, envelopes) {
   }
 
   loadState();
-  if (!dbState.userEnvelopes[userId]) {
-    dbState.userEnvelopes[userId] = [];
+  if (!dbState.changeLogs[userId]) {
+    dbState.changeLogs[userId] = [];
   }
-  if (!dbState.serverClocks[userId]) {
-    dbState.serverClocks[userId] = 0;
+  if (!dbState.serverCursors[userId]) {
+    dbState.serverCursors[userId] = 0;
   }
 
-  const existingList = dbState.userEnvelopes[userId];
-  let currentClock = dbState.serverClocks[userId];
+  const userLogs = dbState.changeLogs[userId];
+  let cursor = dbState.serverCursors[userId];
 
   for (const envelope of envelopes) {
-    currentClock = Math.max(currentClock, envelope.lamportTimestamp || 0) + 1;
-    const itemWithUser = {
-      ...envelope,
-      userId,
+    cursor += 1;
+    const changeRecord = {
+      sequence: cursor,
+      serverCursor: cursor,
+      entityId: envelope.entityId,
+      entityType: envelope.entityType,
+      operation: envelope.isDeleted ? "DELETE" : "UPSERT",
       lamportTimestamp: envelope.lamportTimestamp || 0,
-      serverCursor: currentClock,
+      deviceId: envelope.deviceId || envelope.clientId || "",
+      payload: envelope.payload,
+      isDeleted: Boolean(envelope.isDeleted),
+      createdAt: Date.now(),
+      userId,
     };
-    const existingIndex = existingList.findIndex(
-      (e) => e.entityId === envelope.entityId && e.entityType === envelope.entityType
-    );
-    if (existingIndex >= 0) {
-      const current = existingList[existingIndex];
-      const incomingTimestamp = envelope.lamportTimestamp || 0;
-      const currentTimestamp = current.lamportTimestamp || 0;
-      if (incomingTimestamp > currentTimestamp) {
-        existingList[existingIndex] = itemWithUser;
-      } else if (incomingTimestamp === currentTimestamp) {
-        const incomingDevice = envelope.deviceId || envelope.clientId || "";
-        const currentDevice = current.deviceId || current.clientId || "";
-        if (incomingDevice.localeCompare(currentDevice) >= 0) {
-          existingList[existingIndex] = itemWithUser;
-        }
-      }
-    } else {
-      existingList.push(itemWithUser);
-    }
+    userLogs.push(changeRecord);
   }
 
-  dbState.serverClocks[userId] = currentClock;
+  dbState.serverCursors[userId] = cursor;
   saveState();
 
   return {
@@ -264,34 +292,35 @@ export function handleSyncPush(userId, envelopes) {
     body: {
       success: true,
       committedCount: envelopes.length,
-      serverLamportTimestamp: currentClock,
+      serverCursor: cursor,
+      serverLamportTimestamp: cursor,
     },
   };
 }
 
 export function handleSyncPull(userId, sinceCursor = 0, limit = 100) {
   loadState();
-  const list = dbState.userEnvelopes[userId] || [];
-  const clock = dbState.serverClocks[userId] || 0;
+  const list = dbState.changeLogs[userId] || [];
+  const latestCursor = dbState.serverCursors[userId] || 0;
   const safeLimit = Math.min(Math.max(Number(limit) || 100, 1), 500);
-  const filtered = list
-    .filter((e) => (e.serverCursor || e.lamportTimestamp || 0) > Number(sinceCursor || 0))
-    .sort((a, b) => (a.serverCursor || a.lamportTimestamp || 0) - (b.serverCursor || b.lamportTimestamp || 0));
+  const since = Number(sinceCursor) || 0;
+
+  const filtered = list.filter((c) => c.sequence > since);
+  filtered.sort((a, b) => a.sequence - b.sequence);
 
   const page = filtered.slice(0, safeLimit);
   const hasMore = filtered.length > safeLimit;
-  const nextCursor =
-    page.length > 0
-      ? page[page.length - 1].serverCursor || page[page.length - 1].lamportTimestamp
-      : Number(sinceCursor || 0);
+  const nextCursor = page.length > 0 ? page[page.length - 1].sequence : since;
 
   return {
     status: 200,
     body: {
       envelopes: page,
-      latestServerTimestamp: clock,
+      changes: page,
       nextCursor,
       hasMore,
+      latestServerCursor: latestCursor,
+      latestServerTimestamp: latestCursor,
     },
   };
 }

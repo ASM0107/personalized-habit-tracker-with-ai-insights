@@ -210,7 +210,7 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
   it("persists offline sync outbound queue across coordinator reloads", async () => {
     const clock = new LamportClock();
     const dummyAdapter: RemoteSyncPort = {
-      pushEnvelopes: async () => ({ success: false, committedCount: 0, serverLamportTimestamp: 0, error: "offline" }),
+      pushEnvelopes: async () => ({ success: false, committedCount: 0, serverCursor: 0, serverLamportTimestamp: 0, error: "offline" }),
       pullEnvelopes: async () => [],
       subscribeToRemote: () => () => {},
     };
@@ -227,12 +227,38 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
     coord2.destroy();
   });
 
+  it("rolls back queue and raises observable error when queue persistence fails", () => {
+    const clock = new LamportClock();
+    const dummyAdapter: RemoteSyncPort = {
+      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverCursor: 0, serverLamportTimestamp: 0 }),
+      pullEnvelopes: async () => [],
+      subscribeToRemote: () => () => {},
+    };
+
+    const originalSetItem = window.localStorage.setItem;
+    window.localStorage.setItem = () => {
+      throw new Error("QuotaExceededError");
+    };
+
+    try {
+      const coordinator = new SyncCoordinator("storage-fail-device", clock, dummyAdapter);
+      expect(() => {
+        coordinator.enqueueLocalChange("fail-h1", "HABIT", { title: "Failing Habit" });
+      }).toThrow("QuotaExceededError");
+
+      expect(coordinator.getStats().pendingOutboundCount).toBe(0);
+      coordinator.destroy();
+    } finally {
+      window.localStorage.setItem = originalSetItem;
+    }
+  });
+
   it("dispatches incoming remote sync envelopes to registered local entity appliers", async () => {
     const clock = new LamportClock();
-    const localDatabase = new Map<string, any>();
+    const localDatabase = new Map<string, unknown>();
 
     const dummyAdapter: RemoteSyncPort = {
-      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverLamportTimestamp: 10 }),
+      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverCursor: 10, serverLamportTimestamp: 10 }),
       pullEnvelopes: async () => [
         {
           entityId: "remote-applied-habit",
@@ -254,7 +280,8 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
     const stats = await coordinator.syncNow();
     expect(stats.state).toBe("IDLE");
     expect(localDatabase.has("remote-applied-habit")).toBe(true);
-    expect(localDatabase.get("remote-applied-habit").title).toBe("Cloud Pulled Habit");
+    const retrieved = localDatabase.get("remote-applied-habit") as { title: string } | undefined;
+    expect(retrieved?.title).toBe("Cloud Pulled Habit");
 
     coordinator.destroy();
   });
@@ -262,7 +289,7 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
   it("transitions SyncCoordinator into ERROR state when pull request fails", async () => {
     const clock = new LamportClock();
     const failingAdapter: RemoteSyncPort = {
-      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverLamportTimestamp: 0 }),
+      pushEnvelopes: async () => ({ success: true, committedCount: 0, serverCursor: 0, serverLamportTimestamp: 0 }),
       pullEnvelopes: async () => {
         throw new Error("500 Internal Server Error");
       },
@@ -273,7 +300,6 @@ describe("Remote Cloud Sync & AI Key Configuration Verification", () => {
     const stats = await coordinator.syncNow();
     expect(stats.state).toBe("ERROR");
     expect(stats.lastError).toContain("500 Internal Server Error");
-
     coordinator.destroy();
   });
 });

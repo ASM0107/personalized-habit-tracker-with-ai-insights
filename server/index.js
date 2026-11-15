@@ -104,7 +104,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readJsonBody(req);
       const clientIp = req.socket?.remoteAddress || "local";
-      const result = handleRegister(payload, clientIp);
+      const result = await handleRegister(payload, clientIp);
       res.writeHead(result.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {
@@ -118,7 +118,7 @@ const server = http.createServer(async (req, res) => {
     try {
       const payload = await readJsonBody(req);
       const clientIp = req.socket?.remoteAddress || "local";
-      const result = handleLogin(payload, clientIp);
+      const result = await handleLogin(payload, clientIp);
       res.writeHead(result.status, { "Content-Type": "application/json" });
       res.end(JSON.stringify(result.body));
     } catch {
@@ -167,7 +167,8 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     const since = url.searchParams.get("since") || "0";
-    const result = handleSyncPull(user.id, Number.parseInt(since, 10));
+    const limit = url.searchParams.get("limit") || "100";
+    const result = handleSyncPull(user.id, Number.parseInt(since, 10), Number.parseInt(limit, 10));
     res.writeHead(result.status, { "Content-Type": "application/json" });
     res.end(JSON.stringify(result.body));
     return;

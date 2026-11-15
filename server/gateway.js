@@ -143,9 +143,8 @@ export async function handleAiInferenceRequest(payload, apiKey, clientId = "anon
       signal: controller.signal,
     });
 
-    clearTimeout(timeoutId);
-
     if (!upstreamResponse.ok) {
+      clearTimeout(timeoutId);
       const sanitizedMessage =
         upstreamResponse.status === 429
           ? "Upstream AI rate limit exceeded. Please retry shortly."
@@ -160,6 +159,8 @@ export async function handleAiInferenceRequest(payload, apiKey, clientId = "anon
     }
 
     const json = await upstreamResponse.json();
+    clearTimeout(timeoutId);
+
     const candidateText = json.candidates?.[0]?.content?.parts?.[0]?.text;
     if (!candidateText) {
       return {
@@ -168,7 +169,27 @@ export async function handleAiInferenceRequest(payload, apiKey, clientId = "anon
       };
     }
 
-    const parsedData = JSON.parse(candidateText);
+    let parsedData = null;
+    try {
+      parsedData = JSON.parse(candidateText);
+    } catch {
+      return {
+        status: 502,
+        body: { error: "Upstream AI returned non-JSON candidate content" },
+      };
+    }
+
+    if (parsedSchema && parsedSchema.required && Array.isArray(parsedSchema.required)) {
+      for (const requiredKey of parsedSchema.required) {
+        if (!(requiredKey in parsedData)) {
+          return {
+            status: 502,
+            body: { error: `Upstream AI response failed schema validation: missing required property "${requiredKey}"` },
+          };
+        }
+      }
+    }
+
     return {
       status: 200,
       body: { data: parsedData },

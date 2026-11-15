@@ -137,4 +137,34 @@ describe("AI Gateway Security & Robustness Audit", () => {
     expect(resTimeout.status).toBe(504);
     expect(resTimeout.body.error).toContain("AI gateway timeout");
   });
+
+  it("rejects upstream responses that fail requested schema validation with 502", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+      return new Response(
+        JSON.stringify({
+          candidates: [{ content: { parts: [{ text: JSON.stringify({ optionalField: "val" }) }] } }],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    });
+
+    const schemaWithRequired = JSON.stringify({
+      type: "object",
+      required: ["mandatoryInsight", "score"],
+      properties: {
+        mandatoryInsight: { type: "string" },
+        score: { type: "number" },
+      },
+    });
+
+    const res = await handleAiInferenceRequest(
+      { prompt: "Analyze", responseSchemaJson: schemaWithRequired },
+      "fake-key",
+      "client-schema-validator"
+    );
+
+    expect(res.status).toBe(502);
+    expect(res.body.error).toContain("failed schema validation");
+    expect(res.body.error).toContain("mandatoryInsight");
+  });
 });
