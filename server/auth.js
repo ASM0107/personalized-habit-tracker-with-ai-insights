@@ -37,34 +37,35 @@ function hashPassword(password, salt) {
   return crypto.scryptSync(password, salt, 64).toString("hex");
 }
 
-function signToken(userId) {
-  const timestamp = Date.now().toString();
-  const data = `${userId}:${timestamp}`;
-  const hmac = crypto.createHmac("sha256", AUTH_SECRET).update(data).digest("hex");
-  return Buffer.from(`${data}:${hmac}`).toString("base64url");
+function signToken(user) {
+  const payload = JSON.stringify({
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    ts: Date.now(),
+  });
+  const payloadB64 = Buffer.from(payload).toString("base64url");
+  const hmac = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest("base64url");
+  return `${payloadB64}.${hmac}`;
 }
 
 export function verifyToken(rawToken) {
   try {
-    loadState();
     const token = (rawToken || "").replace(/^Bearer\s+/i, "").trim();
     if (!token) {
       return null;
     }
-    const decoded = Buffer.from(token, "base64url").toString("utf-8");
-    const parts = decoded.split(":");
-    if (parts.length !== 3) {
+    const parts = token.split(".");
+    if (parts.length !== 2) {
       return null;
     }
-    const [userId, timestamp, hmac] = parts;
-    if (!userId || !timestamp || !hmac) {
-      return null;
-    }
-    const expected = crypto.createHmac("sha256", AUTH_SECRET).update(`${userId}:${timestamp}`).digest("hex");
+    const [payloadB64, hmac] = parts;
+    const expected = crypto.createHmac("sha256", AUTH_SECRET).update(payloadB64).digest("base64url");
     if (!crypto.timingSafeEqual(Buffer.from(hmac), Buffer.from(expected))) {
       return null;
     }
-    return dbState.users[userId] || null;
+    const user = JSON.parse(Buffer.from(payloadB64, "base64url").toString("utf-8"));
+    return user;
   } catch {
     return null;
   }
@@ -105,7 +106,7 @@ export function handleRegister(payload) {
   dbState.serverClocks[id] = 0;
   saveState();
 
-  const token = signToken(id);
+  const token = signToken(user);
   return {
     status: 201,
     body: {
@@ -140,7 +141,7 @@ export function handleLogin(payload) {
     return { status: 401, body: { error: "Invalid email or password" } };
   }
 
-  const token = signToken(user.id);
+  const token = signToken(user);
   return {
     status: 200,
     body: {
