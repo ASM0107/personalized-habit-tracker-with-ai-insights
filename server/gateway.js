@@ -6,7 +6,7 @@ export async function handleAiInferenceRequest(payload, apiKey) {
     };
   }
 
-  const modelName = payload?.modelName || "gemini-3.8-flash";
+  const modelName = payload?.modelName || "gemini-3.5-flash-lite";
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 35000);
 
